@@ -19,6 +19,38 @@ UNTARGETED_FEATURE_NAMES = tuple(
 )
 
 
+def target_feature_names(num_classes: int = 10) -> tuple[str, ...]:
+    """Return names for logits-relative-to-target features."""
+
+    if int(num_classes) < 2:
+        raise ValueError("num_classes must be at least 2")
+    return tuple(
+        [f"logit_gap_class_{index}_vs_target" for index in range(int(num_classes))]
+        + ["top1_top2_margin", "entropy"]
+    )
+
+
+def target_conditioned_logits_features(logits: Tensor, target: int) -> Tensor:
+    """Extract target-relative logits features for any valid target class.
+
+    The target column is retained as a zero gap so every target uses the same
+    feature dimension and feature ordering.  The other columns are
+    ``z_k - z_target``.  The final two values are the global top-1/top-2
+    margin and softmax entropy.
+    """
+
+    if logits.ndim != 2 or logits.shape[1] < 2:
+        raise ValueError(f"expected logits with shape [N, K] and K >= 2, got {tuple(logits.shape)}")
+    target = int(target)
+    if target < 0 or target >= logits.shape[1]:
+        raise ValueError(f"target {target} is outside logits dimension {logits.shape[1]}")
+    gaps = logits - logits[:, target : target + 1]
+    top2 = logits.topk(k=2, dim=1).values
+    probabilities = logits.softmax(dim=1)
+    entropy = -(probabilities.clamp_min(1e-12) * probabilities.clamp_min(1e-12).log()).sum(dim=1, keepdim=True)
+    return torch.cat((gaps, (top2[:, 0] - top2[:, 1]).unsqueeze(1), entropy), dim=1)
+
+
 def target_margin(logits: Tensor, target: int) -> Tensor:
     """Return ``max(non-target logits) - target logit`` for each sample."""
 

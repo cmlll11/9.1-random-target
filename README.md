@@ -131,3 +131,37 @@ An existing model-gate report can optionally be supplied through
 `QUALITY_REPORT=/path/to/hard_sample_gap_model_gates.json`; its native trigger
 ASR values are copied into `model_quality.csv` without adding trigger logic to
 the untargeted experiment.
+
+## Stage WT wrong-target targeted-PGD pilot
+
+Stage WT tests whether a target-specific targeted attack still separates Clean
+and BadNet models when the real BadNet target is unknown.  The default targets
+are `0,1,3,7`: target 0 is the known-target positive control and 1, 3, and 7
+are fixed wrong-target pilot cases.  Clean seeds 3 and 4 fit one
+target-specific Ridge Probe per target on CIFAR-100 train images.  Clean and
+BadNet seeds 0--2 independently select Probe Top-100, target-margin Top-100,
+and Random-100 samples from their own eligible CIFAR-100 test pools, where
+the original prediction is not already the selected target.
+
+The targeted-PGD evaluation uses 100 steps, three random restarts, and the
+`0.5, 1, 1.5, 2, 3, 4 / 255` grid.  Results include deployment-style records,
+the Clean-Probe paired diagnostic, small-budget ASR gaps, and the fixed
+random baseline under `results/stage_wt_wrong_target/`.
+
+Run it on the GPU server with:
+
+```bash
+cd /path/to/9.1-random-target
+PYTHON_BIN=/home/cml/.conda/envs/mdl-uap/bin/python \
+DATA_ROOT=/home/cml/8.11/data \
+MODEL_ROOT=/home/cml/8.11/artifacts/models/hard_sample_gap \
+BACKDOORBENCH_ROOT=/path/to/9.1-random-target/third_party/BackdoorBench \
+QUALITY_REPORT=/home/cml/8.11/reports/hard_sample_gap_model_gates.json \
+BATCH_SIZE=64 \
+GPU_ID=0 \
+bash bash/run_probe_cifar100_wrong_target.sh
+```
+
+Set `TARGETS=0,1,3,7` for the pilot.  After the pilot, set
+`TARGETS=0,1,2,3,4,5,6,7,8,9` to estimate the fraction of effective wrong
+targets on CIFAR-10.
