@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import importlib.util
 from pathlib import Path
 
 import torch
@@ -62,3 +63,34 @@ def load_attack_result_model(
     for parameter in wrapped.parameters():
         parameter.requires_grad_(False)
     return wrapped, result
+
+
+def load_backdoor_toolbox_resnet18(
+    model_path: str,
+    *,
+    backdoor_toolbox_root: str,
+    device: torch.device,
+) -> tuple[NormalizedClassifier, dict]:
+    """Load the official backdoor-toolbox CIFAR-10 ResNet-18 checkpoint."""
+
+    root = Path(backdoor_toolbox_root).resolve()
+    source = root / "utils" / "resnet.py"
+    if not source.is_file():
+        raise FileNotFoundError(f"backdoor-toolbox ResNet source not found: {source}")
+    spec = importlib.util.spec_from_file_location("stage1d_backdoor_toolbox_resnet", source)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot import official architecture from {source}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    payload = torch.load(model_path, map_location="cpu", weights_only=False)
+    if isinstance(payload, dict) and "state_dict" in payload:
+        payload = payload["state_dict"]
+    if not isinstance(payload, dict):
+        raise ValueError(f"Adaptive-Blend checkpoint is not a state dict: {model_path}")
+    state = {key.removeprefix("module."): value for key, value in payload.items()}
+    model = module.ResNet18(num_classes=10)
+    model.load_state_dict(state, strict=True)
+    wrapped = NormalizedClassifier(model).to(device).eval()
+    for parameter in wrapped.parameters():
+        parameter.requires_grad_(False)
+    return wrapped, {"model_name": "backdoor_toolbox.ResNet18", "source": str(source)}

@@ -44,6 +44,17 @@ class PGDResult:
 
 
 @dataclass
+class TargetedEndpointResult:
+    """Best-loss adversarial endpoint and success state for each input."""
+
+    endpoint: Tensor
+    success: Tensor
+    endpoint_linf: Tensor
+    endpoint_prediction: Tensor
+    target_loss: Tensor
+
+
+@dataclass
 class GridRadiusResult:
     """First-success epsilon on a discrete grid, including right censoring."""
 
@@ -280,6 +291,56 @@ def targeted_pgd(
         best_linf=best_linf,
         best_prediction=best_prediction,
     )
+
+
+def targeted_pgd_endpoint(
+    model: nn.Module,
+    images: Tensor,
+    *,
+    target: int,
+    epsilon: float,
+    steps: int,
+    alpha: float,
+    random_start: bool,
+    restarts: int,
+) -> TargetedEndpointResult:
+    """Return the lowest-target-loss endpoint, including failed attacks.
+
+    The endpoint is used only for feature-direction analysis.  Every input
+    receives an endpoint: successful inputs use the lowest-loss iterate that
+    reached the target, while failed inputs use the lowest-loss iterate found
+    within the same budget.  This avoids silently dropping failure samples.
+    """
+
+    targets = _target_tensor(images, target)
+    n = images.shape[0]
+    best_loss = torch.full((n,), float("inf"), device=images.device)
+    best_endpoint = images.detach().clone()
+    best_linf = torch.zeros((n,), device=images.device)
+    best_prediction = model(images).argmax(dim=1)
+    success = best_prediction.eq(targets)
+
+    for _ in range(int(restarts)):
+        delta = torch.empty_like(images).uniform_(-epsilon, epsilon) if random_start else torch.zeros_like(images)
+        delta = _project_delta(images, delta, epsilon)
+        for _ in range(int(steps)):
+            delta.requires_grad_(True)
+            logits = model((images + delta).clamp(0.0, 1.0))
+            loss = F.cross_entropy(logits, targets, reduction="none")
+            gradient = torch.autograd.grad(loss.sum(), delta)[0]
+            with torch.no_grad():
+                delta = _project_delta(images, delta - alpha * gradient.sign(), epsilon)
+                endpoint = (images + delta).clamp(0.0, 1.0)
+                endpoint_logits = model(endpoint)
+                endpoint_loss = F.cross_entropy(endpoint_logits, targets, reduction="none")
+                endpoint_prediction = endpoint_logits.argmax(dim=1)
+                success |= endpoint_prediction.eq(targets)
+                better = endpoint_loss < best_loss
+                best_loss = torch.where(better, endpoint_loss, best_loss)
+                best_linf = torch.where(better, delta.abs().flatten(1).amax(dim=1), best_linf)
+                best_prediction = torch.where(better, endpoint_prediction, best_prediction)
+                best_endpoint = torch.where(better[:, None, None, None], endpoint, best_endpoint)
+    return TargetedEndpointResult(best_endpoint.detach(), success.detach(), best_linf.detach(), best_prediction.detach(), best_loss.detach())
 
 
 def estimate_grid_radius(

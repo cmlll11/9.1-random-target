@@ -358,7 +358,7 @@ def main() -> None:
                     "censored": level == len(train_eps) + 1,
                     "original_prediction": int(logits[position].argmax().item()),
                 }
-                row.update({f"feature_{name}": float(features[position, column]) for column, name in enumerate(target_feature_names(logits.shape[1]))})
+                row.update({f"feature_{name}": float(features[position, column]) for column, name in enumerate(target_feature_names(target, logits.shape[1]))})
                 probe_rows.append(row)
                 features_parts.append(features[position])
                 labels_parts.append(level)
@@ -366,7 +366,7 @@ def main() -> None:
             np.asarray(features_parts),
             np.asarray(labels_parts, dtype=np.float64),
             alpha=args.ridge_alpha,
-            feature_names=target_feature_names(10),
+            feature_names=target_feature_names(target, 10),
         )
         probe.save(output / f"probe_target_{target}.npz")
         probes[target] = probe
