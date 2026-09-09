@@ -2,7 +2,7 @@
 
 # Train the official Stage 1D-WT models on the complete CIFAR-10 training
 # split.  The old hard-sample checkpoints are never used by this launcher.
-# BackdoorBench handles BadNet, Blended, WaNet, SSBA and Input-Aware;
+# BackdoorBench handles BadNet, Blended, WaNet and Input-Aware;
 # Adaptive-Blend is executed by a user-supplied command from its official
 # backdoor-toolbox checkout because that attack is not part of BackdoorBench.
 set -euo pipefail
@@ -20,8 +20,6 @@ ADAPTIVE_BLEND_TRAIN_COMMAND="${ADAPTIVE_BLEND_TRAIN_COMMAND:-}"
 GPU_ID="${GPU_ID:-0}"
 FORCE_RETRAIN="${FORCE_RETRAIN:-1}"
 RUN_TAG="${RUN_TAG:-stage1d_wt_$(date -u +%Y%m%dT%H%M%SZ)}"
-SSBA_TRAIN_PATH="${SSBA_TRAIN_PATH:-${BACKDOORBENCH_ROOT}/resource/ssba/cifar10_ssba_train_b1.npy}"
-SSBA_TEST_PATH="${SSBA_TEST_PATH:-${BACKDOORBENCH_ROOT}/resource/ssba/cifar10_ssba_test_b1.npy}"
 
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 [[ -x "${PYTHON_BIN}" ]] || { echo "ERROR: Python not executable: ${PYTHON_BIN}" >&2; exit 1; }
@@ -32,7 +30,7 @@ export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 mkdir -p "${MODEL_ROOT}/training_configs" "${MODEL_ROOT}/training_logs"
 git -C "${BACKDOORBENCH_ROOT}" rev-parse HEAD > "${MODEL_ROOT}/training_configs/backdoorbench_commit.txt"
 cp "${BACKDOORBENCH_ROOT}/config/attack/prototype/cifar10.yaml" "${MODEL_ROOT}/training_configs/clean_cifar10.yaml"
-for config in badnet blended wanet ssba inputaware; do
+for config in badnet blended wanet inputaware; do
     cp "${BACKDOORBENCH_ROOT}/config/attack/${config}/default.yaml" "${MODEL_ROOT}/training_configs/${config}_default.yaml"
 done
 
@@ -52,9 +50,6 @@ copy_result() {
     if [[ "${group}" == "inputaware" ]]; then
         cp -f "${BACKDOORBENCH_ROOT}/record/${run}/netCGM.pt" "${destination}/netCGM.pt" 2>/dev/null || true
         cp -f "${BACKDOORBENCH_ROOT}/record/${run}/mask_state_dict.pt" "${destination}/mask_state_dict.pt" 2>/dev/null || true
-    fi
-    if [[ "${group}" == "ssba" ]]; then
-        cp "${SSBA_TEST_PATH}" "${destination}/cifar10_ssba_test_b1.npy"
     fi
 }
 
@@ -80,16 +75,9 @@ train_bdb() {
 }
 
 for seed in 0 1 2 3; do train_clean "${seed}"; done
-[[ -f "${SSBA_TRAIN_PATH}" && -f "${SSBA_TEST_PATH}" ]] || { echo "ERROR: official SSBA arrays missing" >&2; exit 1; }
 train_bdb badnet attack/badnet.py config/attack/badnet/default.yaml
 train_bdb blended attack/blended.py config/attack/blended/default.yaml
 train_bdb wanet attack/wanet.py config/attack/wanet/default.yaml
-(cd "${BACKDOORBENCH_ROOT}" && "${PYTHON_BIN}" attack/ssba.py \
-    --yaml_path config/attack/prototype/cifar10.yaml --bd_yaml_path config/attack/ssba/default.yaml \
-    --dataset_path "${DATA_ROOT}" --save_folder_name "${RUN_TAG}_ssba_seed0" \
-    --attack_train_replace_imgs_path "${SSBA_TRAIN_PATH}" --attack_test_replace_imgs_path "${SSBA_TEST_PATH}" \
-    --random_seed 0 --frequency_save 1 --device cuda:0) 2>&1 | tee "${MODEL_ROOT}/training_logs/ssba_seed0.log"
-copy_result ssba 0 "${RUN_TAG}_ssba_seed0"
 train_bdb inputaware attack/inputaware.py config/attack/inputaware/default.yaml
 
 if [[ -z "${ADAPTIVE_BLEND_ROOT}" || -z "${ADAPTIVE_BLEND_TRAIN_COMMAND}" || -z "${ADAPTIVE_BLEND_MODEL_PATH}" || -z "${ADAPTIVE_BLEND_TRIGGER_PATH}" ]]; then

@@ -11,7 +11,6 @@ MODEL_ROOT="${MODEL_ROOT:-${REPO_ROOT}/artifacts/models/stage1d_wt_official}"
 BACKDOORBENCH_ROOT="${BACKDOORBENCH_ROOT:-${REPO_ROOT}/third_party/BackdoorBench}"
 QUALITY_REPORT="${QUALITY_REPORT:-${MODEL_ROOT}/stage1d_wt_model_gates.json}"
 ADAPTIVE_BLEND_ROOT="${ADAPTIVE_BLEND_ROOT:-}"
-SSBA_TEST_PATH="${SSBA_TEST_PATH:-}"
 INPUTAWARE_STATE_PATH="${INPUTAWARE_STATE_PATH:-${MODEL_ROOT}/inputaware/seed0/netCGM.pt}"
 ADAPTIVE_BLEND_TRIGGER_PATH="${ADAPTIVE_BLEND_TRIGGER_PATH:-${MODEL_ROOT}/adaptive_blend/seed0/adaptive_blend_trigger.png}"
 GPU_ID="${GPU_ID:-0}"
@@ -28,7 +27,7 @@ for seed in 1 2 3; do
     [[ -f "${MODEL_ROOT}/clean_select_shared/seed${seed}/attack_result.pt" ]] || { echo "ERROR: Clean reference checkpoint missing for seed${seed}" >&2; exit 1; }
 done
 [[ -f "${MODEL_ROOT}/clean_select_shared/seed0/attack_result.pt" ]] || { echo "ERROR: Clean test checkpoint missing" >&2; exit 1; }
-for group in badnet blended wanet ssba inputaware adaptive_blend; do
+for group in badnet blended wanet inputaware adaptive_blend; do
     if [[ "${group}" == "adaptive_blend" ]]; then
         [[ -f "${MODEL_ROOT}/adaptive_blend/seed0/official_model.pt" ]] || { echo "ERROR: Adaptive-Blend checkpoint missing" >&2; exit 1; }
     else
@@ -51,10 +50,9 @@ ARGS=(
     --batch-size "${BATCH_SIZE}"
     --device cuda:0
 )
-[[ -n "${SSBA_TEST_PATH}" ]] && ARGS+=(--ssba-test-path "${SSBA_TEST_PATH}")
 {
     echo "[$(date --iso-8601=seconds)] Stage 1D-WT official-trigger alignment"
-    echo "[$(date --iso-8601=seconds)] targets=1,3,7 epsilon=1,1.5/255 groups=badnet,blended,wanet,ssba,inputaware,adaptive_blend"
+    echo "[$(date --iso-8601=seconds)] targets=1,3,7 epsilon=1,1.5/255 groups=badnet,blended,wanet,inputaware,adaptive_blend"
     "${PYTHON_BIN}" "${REPO_ROOT}/scripts/trigger_alignment_wrong_target.py" "${ARGS[@]}"
 } 2>&1 | tee -a "${LAUNCH_LOG}"
 echo "[$(date --iso-8601=seconds)] launch log: ${LAUNCH_LOG}" | tee -a "${LAUNCH_LOG}"

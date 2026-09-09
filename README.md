@@ -169,7 +169,7 @@ targets on CIFAR-10.
 ## Stage 1D-WT official retraining and trigger-direction mechanism
 
 Stage 1D-WT retrains Clean seeds 0--3 and seed-0 BadNet, Blended, WaNet,
-SSBA, Input-Aware, and Adaptive-Blend models on the complete CIFAR-10 train
+Input-Aware, and Adaptive-Blend models on the complete CIFAR-10 train
 split.  BackdoorBench official YAML files are copied into the model artifact
 directory.  Adaptive-Blend must be supplied from its official
 `backdoor-toolbox` checkout through `ADAPTIVE_BLEND_TRAIN_COMMAND`; no other

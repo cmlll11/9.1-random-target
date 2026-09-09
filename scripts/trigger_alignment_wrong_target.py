@@ -41,7 +41,7 @@ from pilot_common import batch_images, load_model, timestamp_run_dir, write_csv,
 TRAIN_EPS_PIXELS = (0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 8.0, 16.0, 32.0)
 ANALYSIS_EPS_PIXELS = (1.0, 1.5)
 DEFAULT_TARGETS = (1, 3, 7)
-BACKDOOR_GROUPS = ("badnet", "blended", "wanet", "ssba", "inputaware", "adaptive_blend")
+BACKDOOR_GROUPS = ("badnet", "blended", "wanet", "inputaware", "adaptive_blend")
 
 
 class AvgPoolFeatures:
