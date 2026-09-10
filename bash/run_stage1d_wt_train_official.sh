@@ -98,7 +98,8 @@ train_clean() {
 }
 
 train_bdb() {
-    local group="$1" script="$2" config="$3" run="${RUN_TAG}_${group}_seed0"
+    local group="$1" script="$2" config="$3"
+    local run="${RUN_TAG}_${group}_seed0"
     if [[ "${FORCE_RETRAIN}" == "0" && -f "${MODEL_ROOT}/${group}/seed0/attack_result.pt" ]]; then return; fi
     (cd "${BACKDOORBENCH_ROOT}" && "${PYTHON_BIN}" "${script}" \
         --yaml_path config/attack/prototype/cifar10.yaml --bd_yaml_path "${config}" \
