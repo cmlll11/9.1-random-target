@@ -38,9 +38,43 @@ copy_result() {
     local group="$1" seed="$2" run="$3"
     local source="${BACKDOORBENCH_ROOT}/record/${run}/attack_result.pt"
     local destination="${MODEL_ROOT}/${group}/seed${seed}"
-    [[ -f "${source}" ]] || { echo "ERROR: official result missing: ${source}" >&2; exit 1; }
     mkdir -p "${destination}"
-    cp "${source}" "${destination}/attack_result.pt"
+
+    if [[ -f "${source}" ]]; then
+        # BackdoorBench attack scripts save the complete attack_result.pt.
+        cp "${source}" "${destination}/attack_result.pt"
+    elif [[ "${group}" == "clean_select_shared" && -f "${BACKDOORBENCH_ROOT}/record/${run}/clean_model.pth" ]]; then
+        # BackdoorBench's prototype Clean attack intentionally saves only a
+        # raw state_dict as clean_model.pth.  Wrap it in the same lightweight
+        # payload expected by the experiment's model loader so that Clean and
+        # backdoor checkpoints use one stable interface.  This fallback is
+        # deliberately restricted to Clean; a missing backdoor attack_result
+        # must remain a hard error.
+        local clean_source="${BACKDOORBENCH_ROOT}/record/${run}/clean_model.pth"
+        cp "${clean_source}" "${destination}/clean_model.pth"
+        "${PYTHON_BIN}" - "${clean_source}" "${destination}/attack_result.pt" <<'PY'
+import sys
+
+import torch
+
+source, destination = sys.argv[1:]
+state = torch.load(source, map_location="cpu", weights_only=False)
+if isinstance(state, dict) and "state_dict" in state:
+    state = state["state_dict"]
+if not isinstance(state, dict):
+    raise TypeError(f"Expected a state_dict in {source}, got {type(state).__name__}")
+payload = {
+    "model_name": "preactresnet18",
+    "num_classes": 10,
+    "model": state,
+}
+torch.save(payload, destination)
+PY
+    else
+        echo "ERROR: official result missing: ${source}" >&2
+        exit 1
+    fi
+
     cp -f "${BACKDOORBENCH_ROOT}/record/${run}/info.pickle" "${destination}/" 2>/dev/null || true
     if [[ "${group}" == "wanet" ]]; then
         cp -f "${BACKDOORBENCH_ROOT}/record/${run}/identity_grid" "${destination}/state_identity_grid.pt" 2>/dev/null || true
