@@ -168,12 +168,11 @@ targets on CIFAR-10.
 
 ## Stage 1D-WT official retraining and trigger-direction mechanism
 
-Stage 1D-WT retrains Clean seeds 0--3 and seed-0 BadNet, Blended, WaNet,
-Input-Aware, and Adaptive-Blend models on the complete CIFAR-10 train
-split.  BackdoorBench official YAML files are copied into the model artifact
-directory.  Adaptive-Blend must be supplied from its official
-`backdoor-toolbox` checkout through `ADAPTIVE_BLEND_TRAIN_COMMAND`; no other
-attack is substituted for it.
+Stage 1D-WT retrains Clean seeds 0--3 and seed-0 BadNet, Blended, WaNet, and
+Input-Aware models on the complete CIFAR-10 train split.  Adaptive-Blend is
+kept as an optional exploratory model: if its official checkpoint already
+exists, the launcher can copy it into the artifact directory, but it is
+excluded from the strict quality gate.  No SSBA model is used in this stage.
 
 Train on the server:
 
@@ -184,14 +183,15 @@ PYTHON_BIN=/home/cml/.conda/envs/mdl-uap/bin/python \
 DATA_ROOT=/home/cml/8.11/data \
 MODEL_ROOT=/home/cml/9.1-random-target/artifacts/models/stage1d_wt_official \
 BACKDOORBENCH_ROOT=/home/cml/9.1-random-target/third_party/BackdoorBench \
-ADAPTIVE_BLEND_ROOT=/path/to/backdoor-toolbox \
-ADAPTIVE_BLEND_TRAIN_COMMAND='official toolbox training command' \
 ADAPTIVE_BLEND_MODEL_PATH=/path/to/official/model.pt \
 ADAPTIVE_BLEND_TRIGGER_PATH=/path/to/official/trigger.png \
 GPU_ID=0 bash bash/run_stage1d_wt_train_official.sh
 ```
 
-After the quality gate passes, run the mechanism analysis:
+After the quality gate passes, run the mechanism analysis.  Adaptive-Blend is
+included only when its checkpoint is present; its rows remain explicitly
+marked `gate_failed` and are interpreted as exploratory rather than primary
+evidence.
 
 ```bash
 cd /path/to/9.1-random-target

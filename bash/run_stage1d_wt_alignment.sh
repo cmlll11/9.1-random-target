@@ -47,12 +47,13 @@ ARGS=(
     --adaptive-blend-root "${ADAPTIVE_BLEND_ROOT}"
     --inputaware-state-path "${INPUTAWARE_STATE_PATH}"
     --adaptive-blend-trigger-path "${ADAPTIVE_BLEND_TRIGGER_PATH}"
+    --include-gate-failed-groups "adaptive_blend"
     --batch-size "${BATCH_SIZE}"
     --device cuda:0
 )
 {
     echo "[$(date --iso-8601=seconds)] Stage 1D-WT official-trigger alignment"
-    echo "[$(date --iso-8601=seconds)] targets=1,3,7 epsilon=1,1.5/255 groups=badnet,blended,wanet,inputaware,adaptive_blend"
+    echo "[$(date --iso-8601=seconds)] targets=1,3,7 epsilon=1,1.5/255 groups=badnet,blended,wanet,inputaware,adaptive_blend(exploratory)"
     "${PYTHON_BIN}" "${REPO_ROOT}/scripts/trigger_alignment_wrong_target.py" "${ARGS[@]}"
 } 2>&1 | tee -a "${LAUNCH_LOG}"
 echo "[$(date --iso-8601=seconds)] launch log: ${LAUNCH_LOG}" | tee -a "${LAUNCH_LOG}"

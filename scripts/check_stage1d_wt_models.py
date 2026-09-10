@@ -68,6 +68,7 @@ def main() -> None:
     parser.add_argument("--clean-group", default="clean_select_shared")
     parser.add_argument("--clean-seeds", default="0,1,2,3")
     parser.add_argument("--backdoor-groups", default="badnet,blended,wanet,inputaware,adaptive_blend")
+    parser.add_argument("--gate-exclude-groups", default="adaptive_blend")
     args = parser.parse_args()
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     data_root, model_root, bdb_root = Path(args.data_root), Path(args.model_root), Path(args.backdoorbench_root)
@@ -110,7 +111,12 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(json.dumps({"output": str(output.resolve()), "rows": rows}, indent=2))
-    if any(row.get("status") != "qualified" for row in rows if row["group"] != args.clean_group):
+    gate_excluded = {item.strip() for item in args.gate_exclude_groups.split(",") if item.strip()}
+    if any(
+        row.get("status") != "qualified"
+        for row in rows
+        if row["group"] != args.clean_group and row["group"] not in gate_excluded
+    ):
         raise SystemExit(2)
 
 

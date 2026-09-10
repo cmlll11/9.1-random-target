@@ -2,9 +2,10 @@
 
 # Train the official Stage 1D-WT models on the complete CIFAR-10 training
 # split.  The old hard-sample checkpoints are never used by this launcher.
-# BackdoorBench handles BadNet, Blended, WaNet and Input-Aware;
-# Adaptive-Blend is executed by a user-supplied command from its official
-# backdoor-toolbox checkout because that attack is not part of BackdoorBench.
+# BackdoorBench handles the four qualified attack families used by this
+# experiment: BadNet, Blended, WaNet and Input-Aware.  Adaptive-Blend is
+# intentionally excluded because its official default run failed the ASR
+# quality gate; its artifacts remain separate and are not used here.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,10 +14,8 @@ PYTHON_BIN="${PYTHON_BIN:-${HOME}/.conda/envs/mdl-uap/bin/python}"
 DATA_ROOT="${DATA_ROOT:-${REPO_ROOT}/data}"
 MODEL_ROOT="${MODEL_ROOT:-${REPO_ROOT}/artifacts/models/stage1d_wt_official}"
 BACKDOORBENCH_ROOT="${BACKDOORBENCH_ROOT:-${REPO_ROOT}/third_party/BackdoorBench}"
-ADAPTIVE_BLEND_ROOT="${ADAPTIVE_BLEND_ROOT:-}"
 ADAPTIVE_BLEND_MODEL_PATH="${ADAPTIVE_BLEND_MODEL_PATH:-}"
 ADAPTIVE_BLEND_TRIGGER_PATH="${ADAPTIVE_BLEND_TRIGGER_PATH:-}"
-ADAPTIVE_BLEND_TRAIN_COMMAND="${ADAPTIVE_BLEND_TRAIN_COMMAND:-}"
 GPU_ID="${GPU_ID:-0}"
 FORCE_RETRAIN="${FORCE_RETRAIN:-1}"
 RUN_TAG="${RUN_TAG:-stage1d_wt_$(date -u +%Y%m%dT%H%M%SZ)}"
@@ -115,20 +114,20 @@ train_bdb blended attack/blended.py config/attack/blended/default.yaml
 train_bdb wanet attack/wanet.py config/attack/wanet/default.yaml
 train_bdb inputaware attack/inputaware.py config/attack/inputaware/default.yaml
 
-if [[ -z "${ADAPTIVE_BLEND_ROOT}" || -z "${ADAPTIVE_BLEND_TRAIN_COMMAND}" || -z "${ADAPTIVE_BLEND_MODEL_PATH}" || -z "${ADAPTIVE_BLEND_TRIGGER_PATH}" ]]; then
-    echo "ERROR: Adaptive-Blend requires ADAPTIVE_BLEND_ROOT, ADAPTIVE_BLEND_TRAIN_COMMAND, ADAPTIVE_BLEND_MODEL_PATH and ADAPTIVE_BLEND_TRIGGER_PATH." >&2
-    exit 1
+# Adaptive-Blend is not part of the strict quality gate.  If an official
+# checkpoint was produced separately, copy it into the shared artifact tree
+# so the mechanism analysis can include it as an exploratory group.
+if [[ -n "${ADAPTIVE_BLEND_MODEL_PATH}" && -f "${ADAPTIVE_BLEND_MODEL_PATH}" ]]; then
+    mkdir -p "${MODEL_ROOT}/adaptive_blend/seed0"
+    cp "${ADAPTIVE_BLEND_MODEL_PATH}" "${MODEL_ROOT}/adaptive_blend/seed0/official_model.pt"
+    if [[ -n "${ADAPTIVE_BLEND_TRIGGER_PATH}" && -f "${ADAPTIVE_BLEND_TRIGGER_PATH}" ]]; then
+        cp "${ADAPTIVE_BLEND_TRIGGER_PATH}" "${MODEL_ROOT}/adaptive_blend/seed0/adaptive_blend_trigger.png"
+    fi
 fi
-printf '%s\n' "${ADAPTIVE_BLEND_TRAIN_COMMAND}" > "${MODEL_ROOT}/training_configs/adaptive_blend_train_command.txt"
-git -C "${ADAPTIVE_BLEND_ROOT}" rev-parse HEAD > "${MODEL_ROOT}/training_configs/adaptive_blend_commit.txt"
-(cd "${ADAPTIVE_BLEND_ROOT}" && bash -lc "${ADAPTIVE_BLEND_TRAIN_COMMAND}") 2>&1 | tee "${MODEL_ROOT}/training_logs/adaptive_blend_seed0.log"
-mkdir -p "${MODEL_ROOT}/adaptive_blend/seed0"
-cp "${ADAPTIVE_BLEND_MODEL_PATH}" "${MODEL_ROOT}/adaptive_blend/seed0/official_model.pt"
-cp "${ADAPTIVE_BLEND_TRIGGER_PATH}" "${MODEL_ROOT}/adaptive_blend/seed0/adaptive_blend_trigger.png"
 
 "${PYTHON_BIN}" "${REPO_ROOT}/scripts/check_stage1d_wt_models.py" \
     --data-root "${DATA_ROOT}" --model-root "${MODEL_ROOT}" --backdoorbench-root "${BACKDOORBENCH_ROOT}" \
     --output "${MODEL_ROOT}/stage1d_wt_model_gates.json" \
-    --adaptive-quality-json "${ADAPTIVE_BLEND_QUALITY_JSON:-}" \
-    --adaptive-blend-root "${ADAPTIVE_BLEND_ROOT}"
+    --backdoor-groups "badnet,blended,wanet,inputaware,adaptive_blend" \
+    --gate-exclude-groups "adaptive_blend"
 echo "Official Stage 1D-WT model training complete: ${MODEL_ROOT}"

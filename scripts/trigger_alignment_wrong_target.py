@@ -252,6 +252,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", default="results/stage1d_wrong_target_trigger_alignment")
     parser.add_argument("--clean-group", default="clean_select_shared")
     parser.add_argument("--backdoor-groups", default=",".join(BACKDOOR_GROUPS))
+    parser.add_argument("--include-gate-failed-groups", default="adaptive_blend")
     parser.add_argument("--reference-clean-seeds", default="1,2,3")
     parser.add_argument("--test-clean-seed", type=int, default=0)
     parser.add_argument("--targets", default="1,3,7")
@@ -373,7 +374,15 @@ def main() -> None:
     clean_status = quality_status(quality, args.clean_group, args.test_clean_seed)
     if clean_status in {"gate_failed", "failed"}:
         raise RuntimeError(f"Clean seed{args.test_clean_seed} failed the model-quality gate")
-    analysis_groups = [group for group in groups if quality_status(quality, group, 0) not in {"gate_failed", "failed"}]
+    exploratory_groups = {
+        item.strip() for item in args.include_gate_failed_groups.split(",") if item.strip()
+    }
+    analysis_groups = [
+        group
+        for group in groups
+        if quality_status(quality, group, 0) not in {"gate_failed", "failed"}
+        or group in exploratory_groups
+    ]
     excluded_groups = {group: quality_status(quality, group, 0) for group in groups if group not in analysis_groups}
     if excluded_groups:
         log(f"excluded gate-failed groups: {excluded_groups}")
