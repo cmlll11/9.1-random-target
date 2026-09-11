@@ -11,5 +11,10 @@
   "use_modulated": 0,
   "fc_layers": 0,
   "fused_conv": 0,
-  "quantize_uint8": true
+  "quantize_uint8": true,
+  "reference_tolerance": {
+    "max_abs_pixel_diff": 1,
+    "max_different_pixel_fraction": 1e-5,
+    "rationale": "Allow the documented uint8 rounding-path difference between the official regeneration script and the experiment adapter."
+  }
 }

@@ -38,6 +38,32 @@ def canonical_reference(path: Path) -> np.ndarray:
     return values
 
 
+def reference_match_status(diff: np.ndarray, config: dict) -> dict:
+    """Classify exact matches and the documented bounded rounding difference."""
+
+    tolerance = config.get("reference_tolerance", {})
+    max_abs = int(tolerance.get("max_abs_pixel_diff", 0))
+    max_fraction = float(tolerance.get("max_different_pixel_fraction", 0.0))
+    different = int(np.count_nonzero(diff))
+    total = int(diff.size)
+    exact = different == 0
+    tolerated = (
+        not exact
+        and int(diff.max()) <= max_abs
+        and different / max(total, 1) <= max_fraction
+    )
+    return {
+        "exact_match": exact,
+        "tolerated_match": tolerated,
+        "accepted": exact or tolerated,
+        "different_pixel_fraction": different / max(total, 1),
+        "reference_tolerance": {
+            "max_abs_pixel_diff": max_abs,
+            "max_different_pixel_fraction": max_fraction,
+        },
+    }
+
+
 def _state_dict(payload):
     if isinstance(payload, dict):
         for key in ("state_dict", "decoder", "model"):
@@ -146,13 +172,14 @@ def main() -> None:
     if generated_np.shape != reference_np.shape:
         raise ValueError(f"SSBA shape mismatch: generated={generated_np.shape}, reference={reference_np.shape}")
     diff = np.abs(generated_np.astype(np.int16) - reference_np.astype(np.int16))
+    match = reference_match_status(diff, config)
     result = {
         "encoder_path": str(encoder.resolve()),
         "decoder_path": str(decoder.resolve()),
         "config_path": str(config_path.resolve()),
         "reference_path": str(reference.resolve()),
         "sample_count": int(len(reference_np)),
-        "exact_match": bool(np.array_equal(generated_np, reference_np)),
+        **match,
         "max_abs_pixel_diff": int(diff.max()),
         "different_pixel_count": int(np.count_nonzero(diff)),
         "config": config,
@@ -160,7 +187,7 @@ def main() -> None:
     }
     Path(args.output).write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result, indent=2))
-    if not result["exact_match"]:
+    if not result["accepted"]:
         raise SystemExit(2)
 
 

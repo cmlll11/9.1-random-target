@@ -19,6 +19,7 @@ from trigger_alignment_wrong_target import (
     parse_floats,
     probe_topk_positions,
 )
+from check_ssba_provenance import reference_match_status
 from mdluap.official_triggers import _array
 
 
@@ -85,3 +86,25 @@ def test_ssba_array_accepts_hwc(tmp_path):
     np.save(path, np.zeros((2, 32, 32, 3), dtype=np.uint8))
     values = _array(path)
     assert tuple(values.shape) == (2, 3, 32, 32)
+
+
+def test_ssba_reference_accepts_documented_rounding_difference():
+    diff = np.zeros((100, 32, 32, 3), dtype=np.int16)
+    diff.reshape(-1)[0] = 1
+    result = reference_match_status(
+        diff,
+        {"reference_tolerance": {"max_abs_pixel_diff": 1, "max_different_pixel_fraction": 1e-5}},
+    )
+    assert result["exact_match"] is False
+    assert result["tolerated_match"] is True
+    assert result["accepted"] is True
+
+
+def test_ssba_reference_rejects_unbounded_difference():
+    diff = np.zeros((100, 32, 32, 3), dtype=np.int16)
+    diff.reshape(-1)[:2] = 2
+    result = reference_match_status(
+        diff,
+        {"reference_tolerance": {"max_abs_pixel_diff": 1, "max_different_pixel_fraction": 1e-5}},
+    )
+    assert result["accepted"] is False
