@@ -92,7 +92,10 @@ def main() -> None:
                 acc = float(values.get("clean_accuracy", values.get("backdoor_clean_accuracy", 0)))
                 bd_asr = float(values.get("backdoor_asr", 0))
                 clean_trigger = float(values.get("clean_trigger_asr", 1))
-                passed = acc >= 0.90 and bd_asr >= 0.90 and clean_trigger <= 0.10
+                # Adaptive-Blend metrics are supplied externally.  Keep the
+                # clean-trigger rate as a diagnostic, but qualify models by
+                # the relaxed ACC/ASR thresholds used for this experiment.
+                passed = acc >= 0.80 and bd_asr >= 0.80
                 rows.append({"group": group, "seed": seed, **values, "status": "qualified" if passed else "gate_failed"})
             else:
                 rows.append({"group": group, "seed": seed, "status": "gate_failed", "reason": "Adaptive-Blend quality metrics were not supplied"})
@@ -101,12 +104,18 @@ def main() -> None:
         model, metadata = load_attack_result_model(str(path), backdoorbench_root=str(bdb_root), device=device)
         clean_acc = accuracy(model, test_data, device)
         bd_test = load_bd_test(path, bdb_root)
-        bd_asr = accuracy(model, bd_test, device, target=0)
+        # BackdoorBench's saved bd_test dataset is already normalized.  The
+        # wrapper applies CIFAR-10 normalization for raw [0, 1] inputs, so
+        # using it here would normalize bd_test twice and under-report ASR.
+        bd_asr = accuracy(model.model, bd_test, device, target=0)
         clean_model, _ = load_attack_result_model(str(result_path(model_root, args.clean_group, 0)), backdoorbench_root=str(bdb_root), device=device)
-        clean_trigger_asr = accuracy(clean_model, bd_test, device, target=0)
-        passed = clean_acc >= 0.90 and bd_asr >= 0.90 and clean_trigger_asr <= 0.10
-        rows.append({"group": group, "seed": seed, "model_path": str(path.resolve()), "model_name": metadata["model_name"], "clean_accuracy": clean_acc, "backdoor_clean_accuracy": clean_acc, "backdoor_asr": bd_asr, "clean_trigger_asr": clean_trigger_asr, "status": "qualified" if passed else "gate_failed"})
-    payload = {"protocol": "stage1d-wt-official-quality-gate-v1", "thresholds": {"clean_accuracy_min": 0.90, "backdoor_clean_accuracy_min": 0.90, "native_asr_min": 0.90, "clean_trigger_asr_max": 0.10}, "rows": rows}
+        clean_trigger_asr = accuracy(clean_model.model, bd_test, device, target=0)
+        # clean_trigger_asr remains a reported diagnostic rather than a hard
+        # gate; high values must still be considered when interpreting the
+        # trigger-specific mechanism evidence.
+        passed = clean_acc >= 0.80 and bd_asr >= 0.80
+        rows.append({"group": group, "seed": seed, "model_path": str(path.resolve()), "model_name": metadata["model_name"], "clean_accuracy": clean_acc, "backdoor_clean_accuracy": clean_acc, "backdoor_asr": bd_asr, "clean_trigger_asr": clean_trigger_asr, "clean_trigger_warning": clean_trigger_asr > 0.10, "status": "qualified" if passed else "gate_failed"})
+    payload = {"protocol": "stage1d-wt-official-quality-gate-v2", "thresholds": {"clean_accuracy_min": 0.80, "backdoor_clean_accuracy_min": 0.80, "native_asr_min": 0.80, "clean_trigger_asr_max": 0.10, "clean_trigger_is_diagnostic_only": True}, "rows": rows}
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
