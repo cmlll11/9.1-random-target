@@ -9,6 +9,7 @@ synthetic replacement trigger.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -119,6 +120,90 @@ class InputAwareTrigger(TriggerAdapter):
         return (triggered_normalized * std + mean).clamp(0.0, 1.0)
 
 
+class SSBAEncoderTrigger(TriggerAdapter):
+    """Generate SSBA images with the exact trained StegaStamp encoder.
+
+    The BackdoorBench SSBA attack stores pre-generated CIFAR-10 replacement
+    arrays and does not expose an input-time transform.  This adapter is only
+    enabled when a provenance JSON describes the encoder and fingerprint
+    generation settings used to create that array.  It never indexes a
+    CIFAR-10 replacement array for CIFAR-100 samples.
+    """
+
+    def __init__(
+        self,
+        status: TriggerStatus,
+        encoder: nn.Module,
+        provenance: dict[str, Any],
+        *,
+        bdb_root: Path,
+        device: torch.device,
+    ):
+        super().__init__(status)
+        self.encoder = encoder.eval()
+        self.provenance = provenance
+        self.bdb_root = bdb_root
+        self.device = device
+        self._fingerprints = self._build_fingerprints()
+
+    def _build_fingerprints(self) -> torch.Tensor:
+        values = self.provenance.get("fingerprint_values")
+        length = int(self.provenance["fingerprint_length"])
+        if values is not None:
+            tensor = torch.as_tensor(values, dtype=torch.float32)
+            if tensor.ndim == 1:
+                tensor = tensor.unsqueeze(0)
+            if tensor.shape[-1] != length:
+                raise ValueError("SSBA fingerprint_values length does not match fingerprint_length")
+            return tensor.to(self.device)
+
+        method = str(self.provenance.get("encode_method", "bch")).lower()
+        if method == "bch":
+            module_path = self.bdb_root / "resource" / "ssba" / "generate_fingerprints.py"
+            spec = importlib.util.spec_from_file_location("stage1d_ssba_fingerprints", module_path)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"cannot import SSBA fingerprint generator from {module_path}")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            secret = str(self.provenance["secret"])
+            values = module.generate_fingerprints_from_bch(length, secret)
+            return torch.as_tensor(values, dtype=torch.float32, device=self.device).unsqueeze(0)
+
+        if method == "seed":
+            seed = int(self.provenance.get("seed", 0))
+            batch_size = int(self.provenance.get("batch_size", 32))
+            generator = torch.Generator(device="cpu").manual_seed(seed)
+            values = torch.randint(0, 2, (batch_size, length), generator=generator, dtype=torch.float32)
+            if bool(self.provenance.get("identical_fingerprints", True)):
+                values = values[:1]
+            return values.to(self.device)
+
+        raise ValueError(
+            "SSBA provenance must provide fingerprint_values or a supported "
+            f"encode_method (bch/seed), got {method!r}"
+        )
+
+    def _fingerprints_for(self, sample_indices: list[int]) -> torch.Tensor:
+        if len(self._fingerprints) == 1:
+            return self._fingerprints.expand(len(sample_indices), -1)
+        batch_size = int(self.provenance.get("batch_size", len(self._fingerprints)))
+        positions = torch.as_tensor([int(index) % batch_size for index in sample_indices], device=self.device)
+        return self._fingerprints[positions]
+
+    @torch.no_grad()
+    def apply(self, images: torch.Tensor, *, sample_indices: list[int], split: str) -> torch.Tensor:
+        if split != "cifar100_test":
+            raise ValueError("SSBA encoder trigger is configured for CIFAR-100 test samples")
+        fingerprints = self._fingerprints_for(sample_indices).to(images.device, images.dtype)
+        output = self.encoder(fingerprints, images)
+        if int(self.provenance.get("use_residual", 0)):
+            output = images + output
+        output = output.clamp(0.0, 1.0)
+        if bool(self.provenance.get("quantize_uint8", True)):
+            output = torch.round(output * 255.0) / 255.0
+        return output
+
+
 def _image(path: Path) -> torch.Tensor:
     image = Image.open(path).convert("RGB").resize((32, 32), Image.Resampling.BILINEAR)
     return torch.from_numpy(np.asarray(image, dtype=np.float32) / 255.0).permute(2, 0, 1).contiguous()
@@ -127,8 +212,12 @@ def _image(path: Path) -> torch.Tensor:
 def _array(path: Path) -> torch.Tensor:
     values = np.asarray(np.load(path))
     tensor = torch.from_numpy(values).float()
-    if tensor.ndim != 4 or tuple(tensor.shape[1:]) != (3, 32, 32):
-        raise ValueError(f"expected [N,3,32,32] SSBA array, got {tuple(tensor.shape)}")
+    if tensor.ndim != 4:
+        raise ValueError(f"expected 4D SSBA array, got {tuple(tensor.shape)}")
+    if tuple(tensor.shape[1:]) == (32, 32, 3):
+        tensor = tensor.permute(0, 3, 1, 2)
+    elif tuple(tensor.shape[1:]) != (3, 32, 32):
+        raise ValueError(f"expected [N,3,32,32] or [N,32,32,3] SSBA array, got {tuple(tensor.shape)}")
     if float(tensor.max()) > 1.0:
         tensor = tensor / 255.0
     return tensor.clamp(0.0, 1.0).contiguous()
@@ -169,6 +258,52 @@ def _load_inputaware(path: Path, root: Path, device: torch.device) -> TriggerAda
     return InputAwareTrigger(TriggerStatus("inputaware", str(path), True), generator, mask, Threshold().to(device))
 
 
+def _load_ssba_encoder(
+    encoder_path: Path,
+    provenance_path: Path,
+    backdoorbench_root: Path,
+    device: torch.device,
+) -> TriggerAdapter:
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    use_modulated = int(provenance.get("use_modulated", 0))
+    resource_root = backdoorbench_root / "resource" / "ssba"
+    if str(resource_root) not in sys.path:
+        sys.path.insert(0, str(resource_root))
+    source = resource_root / ("models_modulated.py" if use_modulated else "models.py")
+    if not source.is_file():
+        raise FileNotFoundError(f"official SSBA model definition missing: {source}")
+    spec = importlib.util.spec_from_file_location("stage1d_ssba_models", source)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot import official SSBA encoder from {source}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    resolution = int(provenance.get("image_resolution", 32))
+    channels = int(provenance.get("image_channels", 3))
+    length = int(provenance["fingerprint_length"])
+    constructor_kwargs = {
+        "fingerprint_size": length,
+        "return_residual": int(provenance.get("use_residual", 0)),
+    }
+    if use_modulated:
+        constructor_kwargs.update({
+            "bias_init": provenance.get("bias_init"),
+            "fused_modconv": int(provenance.get("fused_conv", 0)),
+            "demodulate": int(provenance.get("demodulate", 1)),
+            "fc_layers": int(provenance.get("fc_layers", 0)),
+        })
+    encoder = module.StegaStampEncoder(resolution, channels, **constructor_kwargs)
+    state = _load_state(encoder_path, torch.device("cpu"))
+    encoder.load_state_dict({str(k).removeprefix("module."): v for k, v in state.items()}, strict=True)
+    encoder = encoder.to(device).eval()
+    return SSBAEncoderTrigger(
+        TriggerStatus("ssba", f"{encoder_path};{provenance_path}", True),
+        encoder,
+        provenance,
+        bdb_root=backdoorbench_root,
+        device=device,
+    )
+
+
 def build_trigger_adapters(
     *, model_root: Path, backdoorbench_root: Path, explicit: dict[str, Path | None],
     device: torch.device, blended_alpha: float, wanet_s: float, wanet_grid_rescale: float,
@@ -205,14 +340,20 @@ def build_trigger_adapters(
     else:
         adapters["wanet"] = UnavailableTrigger(TriggerStatus("wanet", str(identity), False, "official WaNet grid state missing"))
 
-    ssba = explicit.get("ssba")
-    if ssba and ssba.is_file():
+    ssba_encoder = explicit.get("ssba_encoder")
+    ssba_config = explicit.get("ssba_config")
+    if ssba_encoder and ssba_config and ssba_encoder.is_file() and ssba_config.is_file():
         try:
-            adapters["ssba"] = SSBAArrayTrigger(TriggerStatus("ssba", str(ssba), True), _array(ssba))
+            adapters["ssba"] = _load_ssba_encoder(ssba_encoder, ssba_config, backdoorbench_root, device)
         except Exception as exc:
-            adapters["ssba"] = UnavailableTrigger(TriggerStatus("ssba", str(ssba), False, str(exc)))
+            adapters["ssba"] = UnavailableTrigger(TriggerStatus("ssba", str(ssba_encoder), False, str(exc)))
     else:
-        adapters["ssba"] = UnavailableTrigger(TriggerStatus("ssba", str(ssba) if ssba else None, False, "no official CIFAR-100 SSBA test-time array supplied"))
+        adapters["ssba"] = UnavailableTrigger(TriggerStatus(
+            "ssba",
+            str(ssba_encoder) if ssba_encoder else None,
+            False,
+            "official SSBA encoder and provenance config are required for CIFAR-100 generation",
+        ))
 
     inputaware = explicit.get("inputaware") or model_root / "inputaware" / "seed0" / "netCGM.pt"
     if inputaware.is_file():
