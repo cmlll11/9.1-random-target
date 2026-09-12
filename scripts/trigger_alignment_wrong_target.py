@@ -873,7 +873,7 @@ def main() -> None:
 
     grouped = defaultdict(list)
     for row in alignment_rows:
-        grouped[(row["target"], row["trigger_type"], row["model_alias"], row["epsilon_pixels"])].append(row)
+        grouped[(row["attack_target"], row["trigger_type"], row["model_alias"], row["epsilon_pixels"])].append(row)
     for key, rows in sorted(grouped.items(), key=lambda item: tuple(str(x) for x in item[0])):
         target, trigger_type, alias, epsilon = key
         cohort_rows = [row for row in rows if row["in_control_cohort"] and row["eligible"]]
@@ -952,7 +952,7 @@ def main() -> None:
     for target in targets:
         for trigger_type in analysis_groups:
             for epsilon in analysis_eps:
-                rows = [row for row in alignment_rows if row["target"] == target and row["trigger_type"] == trigger_type and row["epsilon_pixels"] == epsilon]
+                rows = [row for row in alignment_rows if row["attack_target"] == target and row["trigger_type"] == trigger_type and row["epsilon_pixels"] == epsilon]
                 by_alias = defaultdict(list)
                 for row in rows:
                     by_alias[row["model_alias"]].append(row)
