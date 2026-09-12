@@ -999,7 +999,11 @@ def main() -> None:
                     "c_adv_bd_success": bd_rows[0]["adv_concentration"] if bd_rows else None,
                     "c_adv_clean_success": clean_rows[0]["adv_concentration"] if clean_rows else None,
                     "c_adv_bd_gt_clean": bool(bd_rows and clean_rows and bd_rows[0]["adv_concentration"] is not None and clean_rows[0]["adv_concentration"] is not None and bd_rows[0]["adv_concentration"] > clean_rows[0]["adv_concentration"]),
-                    "control_cohort_n": len([row for row in rows if row["in_control_cohort"]]),
+                    # ``rows`` contains one copy for every model alias.  The
+                    # cohort is defined once from the Backdoor model, so do
+                    # not multiply its size by the number of comparison
+                    # models.
+                    "control_cohort_n": sum(bool(row["in_control_cohort"]) for row in all_bd_rows),
                     "alignment_definition": rows[0]["alignment_definition"] if rows else None,
                 }
                 if trigger_type in SHARED_TRIGGER_GROUPS:
