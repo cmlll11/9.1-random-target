@@ -16,6 +16,7 @@ from trigger_alignment_wrong_target import (
     backdoor_control_cohort,
     alignment_definition,
     model_alias,
+    public_model_alias,
     parse_floats,
     probe_topk_positions,
     shuffled_alignment,
@@ -29,6 +30,8 @@ def test_model_aliases_are_explicit():
     assert model_alias("clean", 3) == "clean3"
     assert model_alias("adaptive_blend", 0) == "adaptive_blend01"
     assert model_alias("ssba", 0) == "ssba0"
+    assert public_model_alias("badnet", 0) == "badnet0"
+    assert public_model_alias("clean", 0) == "clean0"
 
 
 def test_control_cohort_uses_backdoor_only():

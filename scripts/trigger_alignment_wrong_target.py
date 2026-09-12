@@ -109,6 +109,12 @@ def model_alias(group: str, seed: int) -> str:
         raise ValueError(f"no Model Zoo alias configured for group {group!r}") from exc
 
 
+def public_model_alias(internal_key: str, clean_seed: int) -> str:
+    """Map an internal loop key to the registered Model Zoo alias."""
+
+    return model_alias("clean", clean_seed) if internal_key == "clean" else model_alias(internal_key, 0)
+
+
 def load_any_model(model_zoo_root: Path, group: str, seed: int, *, device: torch.device):
     alias = model_alias(group, seed)
     return load_modelzoo_classifier(alias, model_zoo_root=str(model_zoo_root), device=device)
@@ -718,7 +724,7 @@ def main() -> None:
             cohort_id = f"bd_trigger_success_target{target}_{trigger_type}"
             for internal_key in all_model_aliases:
                 record = records[internal_key]
-                public_alias = model_alias("clean", args.test_clean_seed) if internal_key == "clean" else internal_key
+                public_alias = public_model_alias(internal_key, args.test_clean_seed)
                 for pos, sample_index in enumerate(selected_indices):
                     trigger_rows.append({
                         "model_alias": public_alias,
