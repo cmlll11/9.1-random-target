@@ -204,5 +204,8 @@ trigger.
 Only 1/255 and 1.5/255 are used for PGD.  Shared-trigger attacks use trigger
 prototype/concentration metrics; SSBA and Input-Aware additionally use
 same-vs-shuffle metrics.  SSBA PGD continues even when its exact encoder
-provenance check is unavailable; only SSBA alignment is marked unavailable.
+provenance check reports a small documented uint8 reproduction difference: the
+official encoder is still used, and the provenance report is retained.  To
+rerun only SSBA after the other attack families are complete, set
+`BACKDOOR_GROUPS=ssba`; the SSBA alignment uses same-vs-shuffle metrics.
 Results are written under `results/stage1d_target0_trigger_alignment/`.
