@@ -166,7 +166,7 @@ Set `TARGETS=0,1,3,7` for the pilot.  After the pilot, set
 `TARGETS=0,1,2,3,4,5,6,7,8,9` to estimate the fraction of effective wrong
 targets on CIFAR-10.
 
-## Stage 1D-WT Model Zoo trigger-direction mechanism
+## Stage 1D-WT target-0 Model Zoo trigger-direction mechanism
 
 The mechanism experiment does not load raw checkpoints.  It loads the
 registered aliases `clean0`--`clean3`, `badnet0`, `blended0`, `wanet0`,
@@ -178,7 +178,7 @@ pip install -e /home/cml/backdoor-model-zoo
 export MODEL_ZOO_ROOT=/home/cml/model_zoo
 ```
 
-Run the paired mechanism experiment on the server:
+Run the paired target-0 mechanism experiment on the server:
 
 ```bash
 cd /home/cml/9.1-random-target
@@ -193,16 +193,16 @@ SSBA_REFERENCE_TEST_ARRAY=/home/cml/8.11/data/stage1d_ssba_poisoned/cifar10_ssba
 GPU_ID=0 bash bash/run_stage1d_wt_alignment.sh
 ```
 
-The experiment trains wrong-target Probes for targets 1, 3, and 7 using Clean
-seeds 1--3.  Clean0 selects one shared Top-100 per target.  Every model keeps
-that Top-100, but samples whose original prediction already equals the wrong
-target are marked `ineligible_original_target` and are never counted as PGD
-successes.  The paired control cohort is selected only from Backdoor-eligible
-samples whose official trigger reaches class 0; Clean uses the same images and
-the same trigger.
+The experiment trains one target-0 Probe using Clean seeds 1--3.  Clean0
+selects one shared Top-100.  Every model keeps that Top-100, but samples whose
+original prediction already equals target 0 are marked
+`ineligible_original_target` and are never counted as PGD successes.  For each
+backdoor type, the paired control cohort is selected only from eligible samples
+whose official trigger reaches class 0; Clean uses the same images and the same
+trigger.
 
 Only 1/255 and 1.5/255 are used for PGD.  Shared-trigger attacks use trigger
 prototype/concentration metrics; SSBA and Input-Aware additionally use
 same-vs-shuffle metrics.  SSBA PGD continues even when its exact encoder
 provenance check is unavailable; only SSBA alignment is marked unavailable.
-Results are written under `results/stage1d_wrong_target_trigger_alignment/`.
+Results are written under `results/stage1d_target0_trigger_alignment/`.

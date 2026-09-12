@@ -1,14 +1,13 @@
-"""Stage 1D-WT: wrong-target PGD and official trigger-direction analysis.
+"""Stage 1D-WT: target-0 PGD and official trigger-direction analysis.
 
-Clean seeds 1--3 train one Ridge Probe for each wrong target.  Clean seed 0
-uses each Probe to select one shared CIFAR-100 Top-100 set.  That same set is
-then sent to Clean0 and each seed-0 backdoor model so the mechanism comparison
-is paired by image.  The attack target is 1, 3, or 7, while the true backdoor
-target remains 0.
+Clean seeds 1--3 train a target-0 Ridge Probe.  Clean seed 0 uses that Probe to
+select one shared CIFAR-100 Top-100 set.  That same set is then sent to Clean0
+and each seed-0 backdoor model so the mechanism comparison is paired by image.
+The attack target is fixed at 0, which is also the true backdoor target.
 
 This script deliberately does not claim a literal class-transition path.  It
-tests whether a successful wrong-target PGD endpoint has a feature change
-direction similar to the official trigger transformation for that attack.
+tests whether a successful target-0 PGD endpoint has a feature change direction
+similar to the official trigger transformation for that attack.
 """
 
 from __future__ import annotations
@@ -43,7 +42,7 @@ from pilot_common import batch_images, seed_everything, timestamp_run_dir, write
 
 TRAIN_EPS_PIXELS = (0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 8.0, 16.0, 32.0)
 ANALYSIS_EPS_PIXELS = (1.0, 1.5)
-DEFAULT_TARGETS = (1, 3, 7)
+DEFAULT_TARGETS = (0,)
 BACKDOOR_GROUPS = ("badnet", "blended", "wanet", "inputaware", "ssba", "adaptive_blend")
 SHARED_TRIGGER_GROUPS = {"badnet", "blended", "wanet", "adaptive_blend"}
 SAMPLE_TRIGGER_GROUPS = {"ssba", "inputaware"}
@@ -288,12 +287,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-zoo-source-root", default=None)
     parser.add_argument("--backdoorbench-root", required=True)
     parser.add_argument("--trigger-artifact-root", default=None)
-    parser.add_argument("--output-root", default="results/stage1d_wrong_target_trigger_alignment")
+    parser.add_argument("--output-root", default="results/stage1d_target0_trigger_alignment")
     parser.add_argument("--clean-group", default="clean_select_shared")
     parser.add_argument("--backdoor-groups", default=",".join(BACKDOOR_GROUPS))
     parser.add_argument("--reference-clean-seeds", default="1,2,3")
     parser.add_argument("--test-clean-seed", type=int, default=0)
-    parser.add_argument("--targets", default="1,3,7")
+    parser.add_argument(
+        "--targets",
+        default=",".join(map(str, DEFAULT_TARGETS)),
+        help="compatibility option; Stage 1D-WT mechanism analysis accepts only target 0",
+    )
     parser.add_argument("--train-count", type=int, default=1000)
     parser.add_argument("--test-count", type=int, default=1000)
     parser.add_argument("--split-seed", type=int, default=2031)
@@ -433,8 +436,8 @@ def main() -> None:
     args = parse_args()
     seed_everything(args.random_seed)
     targets = parse_ints(args.targets)
-    if not targets or any(target == 0 or target < 0 or target > 9 for target in targets):
-        raise ValueError("Stage 1D-WT targets must be nonzero CIFAR-10 classes")
+    if targets != DEFAULT_TARGETS:
+        raise ValueError("Stage 1D-WT mechanism analysis is fixed to target 0; use --targets 0")
     reference_seeds = parse_ints(args.reference_clean_seeds)
     if args.test_clean_seed in reference_seeds:
         raise ValueError("test Clean seed must be excluded from Probe reference seeds")
@@ -452,7 +455,7 @@ def main() -> None:
     model_zoo_root = Path(raw_model_zoo_root).expanduser()
     if not model_zoo_root.is_dir():
         raise FileNotFoundError(f"Model Zoo root does not exist: {model_zoo_root}")
-    output = timestamp_run_dir(args.output_root, "wrong_target_alignment")
+    output = timestamp_run_dir(args.output_root, "target0_trigger_alignment")
     device = torch.device(args.device)
     data_root, bdb_root = Path(args.data_root), Path(args.backdoorbench_root)
     artifact_root = Path(args.trigger_artifact_root) if args.trigger_artifact_root else bdb_root
@@ -469,7 +472,7 @@ def main() -> None:
     ] + [{"split": "cifar100_test", "position": pos, "sample_index": index} for pos, index in enumerate(test_indices)])
     config = vars(args).copy()
     config.update({
-        "protocol": "stage1d-wt-modelzoo-control-cohort-v2",
+        "protocol": "stage1d-wt-target0-modelzoo-control-cohort-v1",
         "targets": list(targets),
         "reference_clean_seeds": list(reference_seeds),
         "analysis_eps_pixels": list(analysis_eps),
@@ -494,7 +497,7 @@ def main() -> None:
         print(message, flush=True)
         with log_path.open("a", encoding="utf-8") as handle:
             handle.write(message + "\n")
-    log(f"Stage 1D-WT started: {output.resolve()}")
+    log(f"Stage 1D-WT target=0 started: {output.resolve()}")
 
     reference_models = {seed: load_any_model(model_zoo_root, "clean", seed, device=device)[0] for seed in reference_seeds}
     probes, probe_rows = {}, []
@@ -1036,7 +1039,7 @@ def main() -> None:
             "alignment_records": str((output / "feature_alignment_records.csv").resolve()),
             "main_comparisons": str((output / "main_comparisons.json").resolve()),
         },
-        "interpretation": "wrong-target attack to official-trigger-related feature direction; not a literal A->B->C class-transition claim",
+        "interpretation": "target-0 targeted PGD direction relative to each official trigger; not a literal A->B->C class-transition claim",
     }
     write_json(output / "main_comparisons.json", main_comparisons)
     write_json(output / "summary.json", summary)

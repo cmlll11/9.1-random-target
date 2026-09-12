@@ -20,7 +20,7 @@ INPUTAWARE_STATE_PATH="${INPUTAWARE_STATE_PATH:-${TRIGGER_ARTIFACT_ROOT}/inputaw
 ADAPTIVE_BLEND_TRIGGER_PATH="${ADAPTIVE_BLEND_TRIGGER_PATH:-${HOME}/backdoor-toolbox/triggers/hellokitty_32.png}"
 GPU_ID="${GPU_ID:-0}"
 BATCH_SIZE="${BATCH_SIZE:-64}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/results/stage1d_wrong_target_trigger_alignment}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/results/stage1d_target0_trigger_alignment}"
 
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 [[ -x "${PYTHON_BIN}" ]] || { echo "ERROR: Python not executable: ${PYTHON_BIN}" >&2; exit 1; }
@@ -50,6 +50,7 @@ ARGS=(
     --trigger-artifact-root "${TRIGGER_ARTIFACT_ROOT}"
     --output-root "${OUTPUT_ROOT}"
     --backdoor-groups "badnet,blended,wanet,inputaware,ssba,adaptive_blend"
+    --targets "0"
     --inputaware-state-path "${INPUTAWARE_STATE_PATH}"
     --adaptive-blend-trigger-path "${ADAPTIVE_BLEND_TRIGGER_PATH}"
     --analysis-eps-pixels "1,1.5"
@@ -79,8 +80,8 @@ if [[ -n "${SSBA_CHECK_REPORT:-}" && -f "${SSBA_CHECK_REPORT}" ]]; then
     ARGS+=(--ssba-provenance-report "${SSBA_CHECK_REPORT}")
 fi
 {
-    echo "[$(date --iso-8601=seconds)] Stage 1D-WT official-trigger alignment"
-    echo "[$(date --iso-8601=seconds)] aliases=ModelZoo targets=1,3,7 epsilon=1,1.5/255 groups=badnet,blended,wanet,inputaware,ssba,adaptive_blend"
+    echo "[$(date --iso-8601=seconds)] Stage 1D-WT target=0 official-trigger alignment"
+    echo "[$(date --iso-8601=seconds)] aliases=ModelZoo target=0 epsilon=1,1.5/255 groups=badnet,blended,wanet,inputaware,ssba,adaptive_blend"
     "${PYTHON_BIN}" "${REPO_ROOT}/scripts/trigger_alignment_wrong_target.py" "${ARGS[@]}"
 } 2>&1 | tee -a "${LAUNCH_LOG}"
 echo "[$(date --iso-8601=seconds)] launch log: ${LAUNCH_LOG}" | tee -a "${LAUNCH_LOG}"
