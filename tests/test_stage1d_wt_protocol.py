@@ -18,6 +18,7 @@ from trigger_alignment_wrong_target import (
     model_alias,
     parse_floats,
     probe_topk_positions,
+    shuffled_alignment,
 )
 from check_ssba_provenance import reference_match_status
 from mdluap.official_triggers import _array
@@ -34,6 +35,19 @@ def test_control_cohort_uses_backdoor_only():
     eligible = np.array([True, True, False, True])
     trigger_success = np.array([True, False, True, True])
     np.testing.assert_array_equal(backdoor_control_cohort(eligible, trigger_success), [True, False, False, True])
+
+
+def test_shuffle_alignment_stays_inside_control_cohort():
+    adv = np.eye(4, dtype=np.float64)
+    trigger = np.array([
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+    values = shuffled_alignment(adv, trigger, seed=7, repeats=5, positions=np.array([0, 1]))
+    assert np.isfinite(values[:2]).all()
+    assert np.isnan(values[2:]).all()
 
 
 def test_ineligible_samples_are_not_successes():

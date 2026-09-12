@@ -38,7 +38,7 @@ from mdluap.models import load_modelzoo_classifier
 from mdluap.official_triggers import build_trigger_adapters
 from mdluap.probes import RidgeProbe, target_conditioned_logits_features, target_feature_names, target_margin
 from mdluap.targeted_pgd import targeted_pgd, targeted_pgd_endpoint
-from pilot_common import batch_images, timestamp_run_dir, write_csv, write_json
+from pilot_common import batch_images, seed_everything, timestamp_run_dir, write_csv, write_json
 
 
 TRAIN_EPS_PIXELS = (0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 8.0, 16.0, 32.0)
@@ -191,15 +191,36 @@ def prototype(vectors: np.ndarray) -> np.ndarray | None:
     return value / norm if norm > 1e-12 else None
 
 
-def shuffled_alignment(adv: np.ndarray, trigger: np.ndarray, *, seed: int, repeats: int) -> np.ndarray:
+def shuffled_alignment(
+    adv: np.ndarray,
+    trigger: np.ndarray,
+    *,
+    seed: int,
+    repeats: int,
+    positions: np.ndarray | None = None,
+) -> np.ndarray:
+    """Return same-cohort derangement alignment, leaving other rows NaN.
+
+    The shuffle is a control within the fixed Backdoor-defined cohort.  It
+    must not pair a cohort adversarial direction with a trigger direction from
+    an image outside that cohort.
+    """
+
+    result = np.full(len(adv), np.nan, dtype=np.float64)
+    positions = np.arange(len(adv), dtype=int) if positions is None else np.asarray(positions, dtype=int)
+    if len(positions) < 2:
+        return result
     rng = np.random.default_rng(seed)
+    local_adv = adv[positions]
+    local_trigger = trigger[positions]
     values = []
     for _ in range(int(repeats)):
-        order = rng.permutation(len(trigger))
-        while len(trigger) > 1 and np.any(order == np.arange(len(trigger))):
-            order = rng.permutation(len(trigger))
-        values.append(cosine_rows(adv, trigger[order]))
-    return np.nanmean(np.stack(values), axis=0)
+        order = rng.permutation(len(positions))
+        while np.any(order == np.arange(len(positions))):
+            order = rng.permutation(len(positions))
+        values.append(cosine_rows(local_adv, local_trigger[order]))
+    result[positions] = np.nanmean(np.stack(values), axis=0)
+    return result
 
 
 def backdoor_control_cohort(eligible: np.ndarray, trigger_success: np.ndarray) -> np.ndarray:
@@ -270,6 +291,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-count", type=int, default=1000)
     parser.add_argument("--test-count", type=int, default=1000)
     parser.add_argument("--split-seed", type=int, default=2031)
+    parser.add_argument("--random-seed", type=int, default=2031)
     parser.add_argument("--top-k", type=int, default=100)
     parser.add_argument("--ridge-alpha", type=float, default=1.0)
     parser.add_argument("--train-eps-pixels", default=",".join(map(str, TRAIN_EPS_PIXELS)))
@@ -280,6 +302,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--ssba-encoder-path", default=None)
     parser.add_argument("--ssba-config-path", default=None)
+    parser.add_argument("--ssba-provenance-report", default=None)
     parser.add_argument("--inputaware-state-path", default=None)
     parser.add_argument("--adaptive-blend-trigger-path", default=None)
     parser.add_argument("--blended-alpha", type=float, default=0.2)
@@ -402,6 +425,7 @@ def model_zoo_preflight(root: Path, aliases: tuple[str, ...], device: torch.devi
 
 def main() -> None:
     args = parse_args()
+    seed_everything(args.random_seed)
     targets = parse_ints(args.targets)
     if not targets or any(target == 0 or target < 0 or target > 9 for target in targets):
         raise ValueError("Stage 1D-WT targets must be nonzero CIFAR-10 classes")
@@ -451,6 +475,13 @@ def main() -> None:
         "model_zoo_provenance": model_zoo_provenance,
         "control_cohort": "backdoor_eligible_and_backdoor_trigger_success",
     })
+    ssba_provenance = None
+    if args.ssba_provenance_report:
+        report_path = Path(args.ssba_provenance_report)
+        if report_path.is_file():
+            ssba_provenance = json.loads(report_path.read_text(encoding="utf-8"))
+        config["ssba_provenance_report"] = str(report_path.resolve())
+    config["ssba_provenance"] = ssba_provenance
     output.joinpath("config.resolved.yaml").write_text(__import__("yaml").safe_dump(config, sort_keys=False), encoding="utf-8")
     log_path = output / "run.log"
     def log(message: str):
@@ -796,7 +827,13 @@ def main() -> None:
                     alignment = cosine_to_vector(adv_delta, trig_prototype) if shared else cosine_rows(adv_delta, trigger_delta)
                     shuffled = np.full(n, np.nan)
                     if not shared:
-                        shuffled = shuffled_alignment(adv_delta, trigger_delta, seed=2031 + target, repeats=args.shuffle_repeats)
+                        shuffled = shuffled_alignment(
+                            adv_delta,
+                            trigger_delta,
+                            seed=args.random_seed + target,
+                            repeats=args.shuffle_repeats,
+                            positions=np.flatnonzero(cohort),
+                        )
                     for pos, sample_index in enumerate(selected_indices):
                         if not eligible[pos]:
                             sample_group = "ineligible_original_target"
@@ -919,7 +956,11 @@ def main() -> None:
                 by_alias = defaultdict(list)
                 for row in rows:
                     by_alias[row["model_alias"]].append(row)
-                bd_rows = [row for row in by_alias.get(model_alias(trigger_type, 0), []) if row["in_control_cohort"] and row["eligible"] and row["success"] is True]
+                all_bd_rows = by_alias.get(model_alias(trigger_type, 0), [])
+                bd_trigger_observations = [row["trigger_success_true_target"] for row in all_bd_rows if row["trigger_success_true_target"] is not None]
+                bd_eligible_n = sum(bool(row["eligible"]) for row in all_bd_rows)
+                bd_trigger_success_n = sum(bool(row["eligible"]) and bool(row["trigger_success_true_target"]) for row in all_bd_rows)
+                bd_rows = [row for row in all_bd_rows if row["in_control_cohort"] and row["eligible"] and row["success"] is True]
                 clean_rows = [row for row in by_alias.get(clean_public_alias, []) if row["in_control_cohort"] and row["eligible"] and row["success"] is True]
                 bd_alignment = [float(row["same_alignment"]) for row in bd_rows if row["same_alignment"] is not None]
                 clean_alignment = [float(row["same_alignment"]) for row in clean_rows if row["same_alignment"] is not None]
@@ -943,6 +984,9 @@ def main() -> None:
                     "alignment_clean_same": float(np.mean(clean_alignment)) if clean_alignment and trigger_type in SAMPLE_TRIGGER_GROUPS else None,
                     "alignment_clean_shuffle": float(np.mean(clean_shuffled)) if clean_shuffled and trigger_type in SAMPLE_TRIGGER_GROUPS else None,
                     "alignment_bd_same_gt_shuffle": bool(bd_alignment and bd_shuffled and np.mean(bd_alignment) > np.mean(bd_shuffled)) if trigger_type in SAMPLE_TRIGGER_GROUPS else None,
+                    "backdoor_eligible_n": bd_eligible_n,
+                    "backdoor_trigger_success_n": bd_trigger_success_n if bd_trigger_observations else None,
+                    "backdoor_trigger_success_rate": (bd_trigger_success_n / bd_eligible_n) if bd_trigger_observations and bd_eligible_n else None,
                     "c_adv_bd_success": bd_rows[0]["adv_concentration"] if bd_rows else None,
                     "c_adv_clean_success": clean_rows[0]["adv_concentration"] if clean_rows else None,
                     "c_adv_bd_gt_clean": bool(bd_rows and clean_rows and bd_rows[0]["adv_concentration"] is not None and clean_rows[0]["adv_concentration"] is not None and bd_rows[0]["adv_concentration"] > clean_rows[0]["adv_concentration"]),
@@ -979,6 +1023,7 @@ def main() -> None:
         "model_zoo_package_version": model_zoo_provenance["package_version"],
         "model_zoo_registry_sha256": model_zoo_provenance["registry_sha256"],
         "model_zoo_registered_aliases": model_zoo_provenance["registered_aliases"],
+        "ssba_provenance": ssba_provenance,
         "main_comparisons": main_comparisons,
         "outputs": {
             "attack_records": str((output / "attack_records.csv").resolve()),

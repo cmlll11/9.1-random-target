@@ -188,6 +188,8 @@ MODEL_ZOO_ROOT=/home/cml/model_zoo \
 DATA_ROOT=/home/cml/8.11/data \
 TRIGGER_ARTIFACT_ROOT=/home/cml/8.11/artifacts/models/stage1d_wt_official \
 BACKDOORBENCH_ROOT=/home/cml/9.1-random-target/third_party/BackdoorBench \
+SSBA_DECODER_PATH=/home/cml/8.11/data/stage1d_ssba_encoder/checkpoints/stage1d_cifar10_ssba_decoder.pth \
+SSBA_REFERENCE_TEST_ARRAY=/home/cml/8.11/data/stage1d_ssba_poisoned/cifar10_ssba_test_b1.npy \
 GPU_ID=0 bash bash/run_stage1d_wt_alignment.sh
 ```
 

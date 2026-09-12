@@ -304,21 +304,41 @@ def targeted_pgd_endpoint(
     random_start: bool,
     restarts: int,
 ) -> TargetedEndpointResult:
-    """Return the lowest-target-loss endpoint, including failed attacks.
+    """Return a valid endpoint for feature analysis, including failures.
 
     The endpoint is used only for feature-direction analysis.  Every input
-    receives an endpoint: successful inputs use the lowest-loss iterate that
-    reached the target, while failed inputs use the lowest-loss iterate found
-    within the same budget.  This avoids silently dropping failure samples.
+    receives an endpoint: successful inputs use the smallest-Linf iterate that
+    reached the target, while failed inputs use the lowest-target-loss iterate
+    found within the same budget.  This avoids silently treating a non-target
+    endpoint as a successful attack endpoint.
     """
 
     targets = _target_tensor(images, target)
     n = images.shape[0]
-    best_loss = torch.full((n,), float("inf"), device=images.device)
-    best_endpoint = images.detach().clone()
-    best_linf = torch.zeros((n,), device=images.device)
-    best_prediction = model(images).argmax(dim=1)
-    success = best_prediction.eq(targets)
+    with torch.no_grad():
+        initial_logits = model(images)
+        initial_prediction = initial_logits.argmax(dim=1)
+        initial_loss = F.cross_entropy(initial_logits, targets, reduction="none")
+
+    # Keep two candidates per input.  The lowest-loss endpoint is useful for
+    # failures, but it is not necessarily a targeted-success endpoint.  A
+    # successful attack must therefore use the lowest-Linf endpoint that
+    # actually predicts the requested target.
+    best_any_loss = initial_loss.detach().clone()
+    best_any_endpoint = images.detach().clone()
+    best_any_linf = torch.zeros((n,), device=images.device)
+    best_any_prediction = initial_prediction.detach().clone()
+
+    initial_success = initial_prediction.eq(targets)
+    best_success_linf = torch.where(
+        initial_success,
+        torch.zeros((n,), device=images.device),
+        torch.full((n,), float("inf"), device=images.device),
+    )
+    best_success_endpoint = images.detach().clone()
+    best_success_prediction = initial_prediction.detach().clone()
+    best_success_loss = initial_loss.detach().clone()
+    success = initial_success.clone()
 
     for _ in range(int(restarts)):
         delta = torch.empty_like(images).uniform_(-epsilon, epsilon) if random_start else torch.zeros_like(images)
@@ -334,13 +354,32 @@ def targeted_pgd_endpoint(
                 endpoint_logits = model(endpoint)
                 endpoint_loss = F.cross_entropy(endpoint_logits, targets, reduction="none")
                 endpoint_prediction = endpoint_logits.argmax(dim=1)
-                success |= endpoint_prediction.eq(targets)
-                better = endpoint_loss < best_loss
-                best_loss = torch.where(better, endpoint_loss, best_loss)
-                best_linf = torch.where(better, delta.abs().flatten(1).amax(dim=1), best_linf)
-                best_prediction = torch.where(better, endpoint_prediction, best_prediction)
-                best_endpoint = torch.where(better[:, None, None, None], endpoint, best_endpoint)
-    return TargetedEndpointResult(best_endpoint.detach(), success.detach(), best_linf.detach(), best_prediction.detach(), best_loss.detach())
+                endpoint_linf = (endpoint - images).abs().flatten(1).amax(dim=1)
+                endpoint_success = endpoint_prediction.eq(targets)
+                success |= endpoint_success
+
+                better_any = endpoint_loss < best_any_loss
+                best_any_loss = torch.where(better_any, endpoint_loss, best_any_loss)
+                best_any_linf = torch.where(better_any, endpoint_linf, best_any_linf)
+                best_any_prediction = torch.where(better_any, endpoint_prediction, best_any_prediction)
+                best_any_endpoint = torch.where(better_any[:, None, None, None], endpoint, best_any_endpoint)
+
+                better_success = endpoint_success & (endpoint_linf < best_success_linf)
+                best_success_linf = torch.where(better_success, endpoint_linf, best_success_linf)
+                best_success_prediction = torch.where(better_success, endpoint_prediction, best_success_prediction)
+                best_success_loss = torch.where(better_success, endpoint_loss, best_success_loss)
+                best_success_endpoint = torch.where(
+                    better_success[:, None, None, None], endpoint, best_success_endpoint
+                )
+
+    endpoint = torch.where(success[:, None, None, None], best_success_endpoint, best_any_endpoint)
+    endpoint_linf = torch.where(success, best_success_linf, best_any_linf)
+    endpoint_prediction = torch.where(success, best_success_prediction, best_any_prediction)
+    target_loss = torch.where(success, best_success_loss, best_any_loss)
+    return TargetedEndpointResult(
+        endpoint.detach(), success.detach(), endpoint_linf.detach(),
+        endpoint_prediction.detach(), target_loss.detach(),
+    )
 
 
 def estimate_grid_radius(

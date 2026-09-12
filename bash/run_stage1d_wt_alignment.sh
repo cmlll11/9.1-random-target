@@ -13,9 +13,9 @@ BACKDOORBENCH_ROOT="${BACKDOORBENCH_ROOT:-${REPO_ROOT}/third_party/BackdoorBench
 TRIGGER_ARTIFACT_ROOT="${TRIGGER_ARTIFACT_ROOT:-${REPO_ROOT}/artifacts/models/stage1d_wt_official}"
 SSBA_ENCODER_PATH="${SSBA_ENCODER_PATH:-${DATA_ROOT}/stage1d_ssba_encoder/checkpoints/stage1d_cifar10_ssba_encoder.pth}"
 SSBA_CONFIG_PATH="${SSBA_CONFIG_PATH:-${REPO_ROOT}/configs/stage1d_ssba_provenance.json}"
-SSBA_DECODER_PATH="${SSBA_DECODER_PATH:-}"
+SSBA_DECODER_PATH="${SSBA_DECODER_PATH:-${DATA_ROOT}/stage1d_ssba_encoder/checkpoints/stage1d_cifar10_ssba_decoder.pth}"
 SSBA_ORIGINAL_TEST_BATCH="${SSBA_ORIGINAL_TEST_BATCH:-${DATA_ROOT}/cifar10/cifar-10-batches-py/test_batch}"
-SSBA_REFERENCE_TEST_ARRAY="${SSBA_REFERENCE_TEST_ARRAY:-}"
+SSBA_REFERENCE_TEST_ARRAY="${SSBA_REFERENCE_TEST_ARRAY:-${DATA_ROOT}/stage1d_ssba_poisoned/cifar10_ssba_test_b1.npy}"
 INPUTAWARE_STATE_PATH="${INPUTAWARE_STATE_PATH:-${TRIGGER_ARTIFACT_ROOT}/inputaware/seed0/netCGM.pt}"
 ADAPTIVE_BLEND_TRIGGER_PATH="${ADAPTIVE_BLEND_TRIGGER_PATH:-${HOME}/backdoor-toolbox/triggers/hellokitty_32.png}"
 GPU_ID="${GPU_ID:-0}"
@@ -72,7 +72,11 @@ if [[ -n "${SSBA_ENCODER_PATH}" && -n "${SSBA_CONFIG_PATH}" && -n "${SSBA_DECODE
         echo "WARNING: SSBA provenance check failed; continuing without SSBA alignment." >&2
     fi
 else
+    SSBA_CHECK_REPORT=""
     echo "WARNING: SSBA encoder/config/decoder/reference not supplied; SSBA PGD will run but alignment will be unavailable." >&2
+fi
+if [[ -n "${SSBA_CHECK_REPORT:-}" && -f "${SSBA_CHECK_REPORT}" ]]; then
+    ARGS+=(--ssba-provenance-report "${SSBA_CHECK_REPORT}")
 fi
 {
     echo "[$(date --iso-8601=seconds)] Stage 1D-WT official-trigger alignment"
