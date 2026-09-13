@@ -192,8 +192,8 @@ class SSBAEncoderTrigger(TriggerAdapter):
 
     @torch.no_grad()
     def apply(self, images: torch.Tensor, *, sample_indices: list[int], split: str) -> torch.Tensor:
-        if split != "cifar100_test":
-            raise ValueError("SSBA encoder trigger is configured for CIFAR-100 test samples")
+        if split not in {"cifar10_test", "cifar100_test"}:
+            raise ValueError("SSBA encoder trigger expects a CIFAR-10 or CIFAR-100 test split")
         fingerprints = self._fingerprints_for(sample_indices).to(images.device, images.dtype)
         output = self.encoder(fingerprints, images)
         if int(self.provenance.get("use_residual", 0)):

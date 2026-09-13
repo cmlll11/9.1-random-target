@@ -220,3 +220,33 @@ analysis separate from the trigger-alignment control cohort.
 
 Set `SELECTION_FILE` to the `selected_targeted_robust_samples.csv` from the
 completed target-0 Probe run before launching it.
+
+### CIFAR-10 pixel-space trigger mechanism
+
+`bash/run_stage1d_pixel_trigger_mechanism.sh` is an independent mechanism
+experiment.  It does not use Probe scores or a robust-sample selector.  Each
+of BadNet, Blended, WaNet, Input-Aware, Adaptive-Blend, and SSBA gets its own
+randomly ordered cohort of 100 CIFAR-10 test images.  A selected image must
+have a non-zero true label, succeed under target-0 PGD on both Clean0 and the
+corresponding backdoor model, and be classified as target 0 by that model
+after its own official trigger is applied.
+
+The runner tries `1/255` first and independently switches a backdoor family
+to `1.5/255` if that family cannot form a 100-image cohort.  Pixel residuals
+are saved per sample, together with Clean/backdoor PGD concentration,
+residual-to-trigger cosine similarity, trigger concentration, actual L-infinity
+and L2 norms, and the complete Model Zoo provenance.  Results are written to
+`results/stage1d_pixel_trigger_mechanism/`.
+
+Example server invocation:
+
+```bash
+cd /home/cml/9.1-random-target
+PYTHON_BIN=/home/cml/.conda/envs/mdl-uap/bin/python \
+MODEL_ZOO_ROOT=/home/cml/model_zoo \
+DATA_ROOT=/home/cml/8.11/data \
+TRIGGER_ARTIFACT_ROOT=/home/cml/8.11/artifacts/models/stage1d_wt_official \
+BACKDOORBENCH_ROOT=/home/cml/9.1-random-target/third_party/BackdoorBench \
+GPU_ID=1 BATCH_SIZE=64 \
+bash bash/run_stage1d_pixel_trigger_mechanism.sh
+```
