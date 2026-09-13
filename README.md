@@ -209,3 +209,14 @@ official encoder is still used, and the provenance report is retained.  To
 rerun only SSBA after the other attack families are complete, set
 `BACKDOOR_GROUPS=ssba`; the SSBA alignment uses same-vs-shuffle metrics.
 Results are written under `results/stage1d_target0_trigger_alignment/`.
+### Successful-PGD direction concentration
+
+`bash/run_stage1d_concentration.sh` evaluates the fixed Clean0 Probe
+Top-100 at `0.75/255`, `1/255`, and `1.25/255` by default.  It uses the
+registered Model Zoo aliases and computes `C_adv_success` only among samples
+that are eligible and successfully targeted at the same epsilon.  It does not
+condition the cohort on trigger activation; this keeps the concentration
+analysis separate from the trigger-alignment control cohort.
+
+Set `SELECTION_FILE` to the `selected_targeted_robust_samples.csv` from the
+completed target-0 Probe run before launching it.
