@@ -250,3 +250,25 @@ BACKDOORBENCH_ROOT=/home/cml/9.1-random-target/third_party/BackdoorBench \
 GPU_ID=1 BATCH_SIZE=64 \
 bash bash/run_stage1d_pixel_trigger_mechanism.sh
 ```
+
+### CIFAR-10 Probe Top-500 targeted-PGD ASR
+
+`bash/run_probe_cifar10_top500_asr.sh` trains one target-0 Ridge Probe from
+Clean1, Clean2, and Clean3 CIFAR-10 train samples. Clean0 scores the complete
+CIFAR-10 test split and selects one shared Probe Top-500; the same images are
+then evaluated on Clean0, BadNet0, Blended0, WaNet0, Input-Aware0, SSBA0, and
+Adaptive-Blend01. No backdoor model participates in Probe fitting or sample
+selection. Targeted-PGD ASR is reported at `1/255` and `1.5/255`, with
+`eligible` excluding images already predicted as target 0. Results are written
+under `results/stage1e_cifar10_probe_top500_asr/`.
+
+Example server invocation:
+
+```bash
+cd /home/cml/9.1-random-target
+PYTHON_BIN=/home/cml/.conda/envs/mdl-uap/bin/python \
+MODEL_ZOO_ROOT=/home/cml/model_zoo \
+DATA_ROOT=/home/cml/8.11/data \
+GPU_ID=1 BATCH_SIZE=64 TRAIN_COUNT=1000 TOP_K=500 \
+bash bash/run_probe_cifar10_top500_asr.sh
+```
