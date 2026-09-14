@@ -273,14 +273,16 @@ GPU_ID=1 BATCH_SIZE=64 TRAIN_COUNT=1000 TOP_K=500 \
 bash bash/run_probe_cifar10_top500_asr.sh
 ```
 
-### Clean0/BadNet0 Probe Top-100 layerwise trigger-path mechanism
+### Probe Top-100 layerwise trigger-path mechanism
 
-`bash/run_stage1d_layerwise_trigger_mechanism.sh` trains the target-0 Ridge
-Probe on Clean1, Clean2, and Clean3 CIFAR-10 train samples, scores the
-complete CIFAR-10 test split with Clean0, and selects exactly one shared
-Probe Top-100. The previous fixed joint-success cohort is not used by this
-protocol. Clean0 and BadNet0 run the same target-0 PGD on these 100 selected
-images before the layerwise analysis.
+The Probe is fit once from Clean1, Clean2, and Clean3 (or an existing saved
+Probe is reused). Clean0 then scores the complete CIFAR-10 test split once and
+writes one shared Probe Top-100 selection. The previous fixed joint-success
+cohort is not used by this protocol. Clean0 and each selected backdoor alias
+run the same target-0 PGD on exactly this shared 100-image selection before
+the layerwise analysis. Supported aliases are `badnet0`, `wanet0`, and
+`ssba0`; WaNet and SSBA runs must receive the same `SELECTION_FILE` and never
+refit or reselect the Probe.
 
 The analysis compares feature residuals `h(x_adv)-h(x)` and
 `h(T(x))-h(x)` at `pixel`, `conv1`, `layer1`, `layer2`, `layer3`, `layer4`,
@@ -289,7 +291,19 @@ writes per-sample alignment, residual norms, pairwise PGD/trigger
 concentration, Model Zoo provenance, and three depth curves under
 `results/stage1d_layerwise_trigger_mechanism/`.
 
-Example server invocation:
+First, create the reusable selection once from the existing Clean1--3 Probe:
+
+```bash
+cd /home/cml/9.1-random-target
+PROBE_ARCHIVE=/home/cml/9.1-random-target/results/stage1d_layerwise_trigger_mechanism/layerwise_probe_top100_20260914T023906Z/probe_target0.npz \
+DATA_ROOT=/home/cml/8.11/data \
+MODEL_ZOO_ROOT=/home/cml/model_zoo \
+GPU_ID=1 BATCH_SIZE=100 \
+bash bash/run_stage1d_select_probe_top100.sh
+```
+
+Set `SELECTION_FILE` to the resulting `selected_probe_top100.csv`, then run
+each backdoor type. Example BadNet:
 
 ```bash
 cd /home/cml/9.1-random-target
@@ -298,14 +312,40 @@ MODEL_ZOO_ROOT=/home/cml/model_zoo \
 MODEL_ZOO_SOURCE_ROOT=/home/cml/backdoor-model-zoo \
 DATA_ROOT=/home/cml/8.11/data \
 BACKDOORBENCH_ROOT=/home/cml/9.1-random-target/third_party/BackdoorBench \
+SELECTION_FILE=/home/cml/9.1-random-target/results/stage1d_probe_top100_selection/probe_selection_YYYYMMDDTHHMMSSZ/selected_probe_top100.csv \
 GPU_ID=1 BATCH_SIZE=100 \
 bash bash/run_stage1d_layerwise_trigger_mechanism.sh
 ```
 
-The result saves Probe training records and parameters, Clean0 selection
-scores, PGD endpoint records, per-sample layerwise alignment and residual
-norms, pairwise PGD/trigger concentration, Model Zoo provenance, and the
-three depth curves under `results/stage1d_layerwise_trigger_mechanism/`.
+For WaNet and SSBA, the runner first performs a Model Zoo quality/output
+preflight and official-trigger asset check, then aborts if the registered
+clean accuracy/native ASR gate or trigger loading fails. Example WaNet run:
+
+```bash
+BACKDOOR_ALIAS=wanet0 \
+TRIGGER_ARTIFACT_ROOT=/home/cml/8.11/artifacts/models/stage1d_wt_official \
+SELECTION_FILE=/path/to/the/shared/selected_probe_top100.csv \
+GPU_ID=1 BATCH_SIZE=100 \
+bash bash/run_stage1d_layerwise_trigger_mechanism.sh
+```
+
+Example SSBA run:
+
+```bash
+BACKDOOR_ALIAS=ssba0 \
+TRIGGER_ARTIFACT_ROOT=/home/cml/8.11/artifacts/models/stage1d_wt_official \
+SSBA_ENCODER_PATH=/home/cml/8.11/data/stage1d_ssba_encoder/checkpoints/stage1d_cifar10_ssba_encoder.pth \
+SSBA_CONFIG_PATH=/home/cml/9.1-random-target/configs/stage1d_ssba_provenance.json \
+SELECTION_FILE=/path/to/the/shared/selected_probe_top100.csv \
+GPU_ID=1 BATCH_SIZE=100 \
+bash bash/run_stage1d_layerwise_trigger_mechanism.sh
+```
+
+Each result saves the shared selection provenance (and copies Probe training
+records/parameters when they are present beside the selection file), Clean0
+selection scores, PGD endpoint records, per-sample layerwise alignment and
+residual norms, pairwise PGD/trigger concentration, Model Zoo provenance, and
+the three depth curves under the configured output directory.
 The result describes representation-direction alignment and concentration;
 it does not establish a literal causal path.
 
