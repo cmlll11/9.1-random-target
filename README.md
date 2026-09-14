@@ -273,12 +273,14 @@ GPU_ID=1 BATCH_SIZE=64 TRAIN_COUNT=1000 TOP_K=500 \
 bash bash/run_probe_cifar10_top500_asr.sh
 ```
 
-### Clean0/BadNet0 layerwise trigger-path mechanism
+### Clean0/BadNet0 Probe Top-100 layerwise trigger-path mechanism
 
-`bash/run_stage1d_layerwise_trigger_mechanism.sh` reuses the 100-image
-BadNet joint-PGD-success cohort and endpoint archive from the completed
-pixel-space mechanism experiment. It performs forward hooks only: no Probe
-training, sample reselection, or PGD is run.
+`bash/run_stage1d_layerwise_trigger_mechanism.sh` trains the target-0 Ridge
+Probe on Clean1, Clean2, and Clean3 CIFAR-10 train samples, scores the
+complete CIFAR-10 test split with Clean0, and selects exactly one shared
+Probe Top-100. The previous fixed joint-success cohort is not used by this
+protocol. Clean0 and BadNet0 run the same target-0 PGD on these 100 selected
+images before the layerwise analysis.
 
 The analysis compares feature residuals `h(x_adv)-h(x)` and
 `h(T(x))-h(x)` at `pixel`, `conv1`, `layer1`, `layer2`, `layer3`, `layer4`,
@@ -294,14 +296,15 @@ cd /home/cml/9.1-random-target
 PYTHON_BIN=/home/cml/.conda/envs/mdl-uap/bin/python \
 MODEL_ZOO_ROOT=/home/cml/model_zoo \
 MODEL_ZOO_SOURCE_ROOT=/home/cml/backdoor-model-zoo \
-SOURCE_ENDPOINT_ARRAYS=/home/cml/9.1-random-target/results/stage1d_pixel_trigger_mechanism/pixel_trigger_mechanism_20260913T140236Z/endpoint_arrays.npz \
-SOURCE_RUN_DIR=/home/cml/9.1-random-target/results/stage1d_pixel_trigger_mechanism/pixel_trigger_mechanism_20260913T140236Z \
+DATA_ROOT=/home/cml/8.11/data \
+BACKDOORBENCH_ROOT=/home/cml/9.1-random-target/third_party/BackdoorBench \
 GPU_ID=1 BATCH_SIZE=100 \
 bash bash/run_stage1d_layerwise_trigger_mechanism.sh
 ```
 
-The endpoint archive must contain exactly 100 unique indices and the five
-BadNet arrays `badnet_sample_indices`, `badnet_original`, `badnet_clean_adv`,
-`badnet_backdoor_adv`, and `badnet_trigger`, each shaped `[100,3,32,32]` in
-raw `[0,1]` image space. The result describes representation-direction
-alignment and concentration; it does not establish a literal causal path.
+The result saves Probe training records and parameters, Clean0 selection
+scores, PGD endpoint records, per-sample layerwise alignment and residual
+norms, pairwise PGD/trigger concentration, Model Zoo provenance, and the
+three depth curves under `results/stage1d_layerwise_trigger_mechanism/`.
+The result describes representation-direction alignment and concentration;
+it does not establish a literal causal path.

@@ -76,7 +76,11 @@ def git_commit(path: Path | None) -> str | None:
         return None
 
 
-def model_zoo_provenance(root: Path, source_root: Path | None) -> dict[str, Any]:
+def model_zoo_provenance(
+    root: Path,
+    source_root: Path | None,
+    aliases: tuple[str, ...] = ("clean0", "badnet0"),
+) -> dict[str, Any]:
     os.environ["MODEL_ZOO_ROOT"] = str(root)
     from modelzoo import get_model_info, list_models
 
@@ -95,7 +99,7 @@ def model_zoo_provenance(root: Path, source_root: Path | None) -> dict[str, Any]
         "registry_path": str(registry.resolve()) if registry else None,
         "registry_sha256": sha256_file(registry),
         "list_models": list_models(),
-        "infos": {alias: get_model_info(alias) for alias in ("clean0", "badnet0")},
+        "infos": {alias: get_model_info(alias) for alias in aliases},
     }
 
 
