@@ -251,7 +251,7 @@ def model_zoo_rows(provenance: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def plot_curves(output: Path, metrics: list[dict[str, Any]]) -> None:
+def plot_curves(output: Path, metrics: list[dict[str, Any]], backdoor_label: str = "BadNet0") -> None:
     try:
         import matplotlib.pyplot as plt
     except ImportError:
@@ -268,7 +268,7 @@ def plot_curves(output: Path, metrics: list[dict[str, Any]]) -> None:
     ):
         fig, axis = plt.subplots(figsize=(9, 5))
         axis.plot(layers, values(clean_field), marker="o", label="Clean0")
-        axis.plot(layers, values(bad_field), marker="o", label="BadNet0")
+        axis.plot(layers, values(bad_field), marker="o", label=backdoor_label)
         axis.set_title(title)
         axis.set_ylabel(ylabel)
         axis.set_xlabel("network depth")

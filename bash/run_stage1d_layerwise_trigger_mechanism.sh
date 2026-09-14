@@ -37,8 +37,8 @@ export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
     exit 1
 }
 case "${BACKDOOR_ALIAS}" in
-    badnet0|wanet0|ssba0) ;;
-    *) echo "ERROR: BACKDOOR_ALIAS must be badnet0, wanet0, or ssba0" >&2; exit 1 ;;
+    badnet0|blended0|wanet0|inputaware0|ssba0) ;;
+    *) echo "ERROR: BACKDOOR_ALIAS must be badnet0, blended0, wanet0, inputaware0, or ssba0" >&2; exit 1 ;;
 esac
 if [[ "${BACKDOOR_ALIAS}" == "badnet0" ]]; then
     [[ -f "${BADNET_TRIGGER_PATH}" ]] || { echo "ERROR: BadNet trigger is missing: ${BADNET_TRIGGER_PATH}" >&2; exit 1; }

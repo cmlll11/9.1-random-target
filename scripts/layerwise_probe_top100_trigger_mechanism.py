@@ -53,7 +53,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-zoo-source-root", default=None)
     parser.add_argument("--backdoorbench-root", required=True)
     parser.add_argument("--trigger-artifact-root", default=None)
-    parser.add_argument("--backdoor-alias", default="badnet0", choices=("badnet0", "wanet0", "ssba0"))
+    parser.add_argument("--backdoor-alias", default="badnet0", choices=("badnet0", "blended0", "wanet0", "inputaware0", "ssba0"))
     parser.add_argument("--badnet-trigger-path", default=None)
     parser.add_argument("--wanet-state-path", default=None)
     parser.add_argument("--ssba-encoder-path", default=None)
@@ -318,7 +318,13 @@ def main() -> None:
         write_csv(output / "selected_probe_top100.csv", [{"rank": rank, "sample_index": index, "true_label": int(test_labels[positions[index]]), "clean0_original_prediction": int(predictions[positions[index]]), "clean0_eligible": int(predictions[positions[index]]) != args.target, "probe_score": float(scores[positions[index]]), "target": args.target} for rank, index in enumerate(selected_indices, start=1)])
         log(f"Clean0 selected Probe Top-{len(selected_indices)}")
 
-    trigger_type = {"badnet0": "badnet", "wanet0": "wanet", "ssba0": "ssba"}[args.backdoor_alias]
+    trigger_type = {
+        "badnet0": "badnet",
+        "blended0": "blended",
+        "wanet0": "wanet",
+        "inputaware0": "inputaware",
+        "ssba0": "ssba",
+    }[args.backdoor_alias]
     explicit = {
         "badnet": Path(args.badnet_trigger_path).expanduser().resolve() if args.badnet_trigger_path else None,
         "wanet_identity": None,
@@ -338,7 +344,7 @@ def main() -> None:
     adapter_map = build_trigger_adapters(model_root=trigger_artifact_root, backdoorbench_root=backdoorbench_root, explicit=explicit, device=device, blended_alpha=0.2, wanet_s=0.5, wanet_grid_rescale=1.0)
     adapter = adapter_map[trigger_type]
     if not adapter.status.available:
-        raise RuntimeError(f"BadNet trigger unavailable: {adapter.status.reason}")
+        raise RuntimeError(f"{trigger_type} trigger unavailable: {adapter.status.reason}")
     trigger_images = apply_trigger(adapter, test_data, selected_indices, batch_size=args.batch_size, device=device)
     original_images = np.stack([test_data[index][0].numpy().astype(np.float32) for index in selected_indices])
 
@@ -363,13 +369,23 @@ def main() -> None:
         residuals[alias] = {"adv": adv_values, "trigger": trigger_values}
         del model
     metrics, sample_rows = metric_rows(residuals, np.asarray(selected_indices, dtype=np.int64), args.backdoor_alias)
+    gap_rows = [{
+        "layer": row["layer"],
+        "alignment_gap": row["alignment_gap_badnet_minus_clean"],
+        "trigger_concentration_gap": row["trigger_concentration_gap_badnet_minus_clean"],
+        "adv_concentration_gap": row["adv_concentration_gap_badnet_minus_clean"],
+    } for row in metrics]
     write_csv(output / "attack_records.csv", attack_records)
     write_csv(output / "layer_metrics.csv", metrics)
+    write_csv(output / "layer_gap_metrics.csv", gap_rows)
     write_csv(output / "per_sample_layer_records.csv", sample_rows)
     np.savez_compressed(output / "endpoint_arrays.npz", sample_indices=np.asarray(selected_indices, dtype=np.int64), original=original_images, clean0_adv=endpoints["clean0"], backdoor_adv=endpoints[args.backdoor_alias], backdoor_trigger=trigger_images)
     write_csv(output / "model_quality.csv", [{"model_alias": alias, "model_type": provenance["infos"][alias].get("model_type"), "attack": provenance["infos"][alias].get("attack"), "classifier_seed": provenance["infos"][alias].get("classifier_seed"), "clean_acc": provenance["infos"][alias].get("clean_acc"), "native_asr": provenance["infos"][alias].get("asr")} for alias in aliases])
-    plot_curves(output, metrics)
-    write_json(output / "summary.json", {"protocol": config["protocol"], "output_directory": str(output), "selected_count": len(selected_indices), "selected_indices": selected_indices, "models": ["clean0", args.backdoor_alias], "backdoor_alias": args.backdoor_alias, "trigger_type": trigger_type, "trigger_source": adapter.status.source, "metrics": metrics, "model_zoo_provenance": provenance, "attack_success_counts": {alias: sum(row["success"] for row in attack_records if row["model_alias"] == alias) for alias in ("clean0", args.backdoor_alias)}, "interpretation_boundary": "Probe-selected Top-100 representation-direction alignment and concentration; not a causal proof."})
+    plot_curves(output, metrics, args.backdoor_alias)
+    write_json(output / "summary.json", {"protocol": config["protocol"], "output_directory": str(output), "selected_count": len(selected_indices), "selected_indices": selected_indices, "models": ["clean0", args.backdoor_alias], "backdoor_alias": args.backdoor_alias, "trigger_type": trigger_type, "trigger_source": adapter.status.source, "metrics": metrics, "gap_metrics": gap_rows, "model_zoo_provenance": provenance, "attack_success_counts": {alias: sum(row["success"] for row in attack_records if row["model_alias"] == alias) for alias in ("clean0", args.backdoor_alias)}, "interpretation_boundary": "Probe-selected Top-100 representation-direction alignment and concentration; not a causal proof."})
+    log("layer,alignment_gap,trigger_concentration_gap,adv_concentration_gap")
+    for row in gap_rows:
+        log(f"{row['layer']},{row['alignment_gap']},{row['trigger_concentration_gap']},{row['adv_concentration_gap']}")
     log(f"Probe Top-100 layerwise experiment complete: {output}")
 
 

@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-zoo-source-root", default=None)
     parser.add_argument("--backdoorbench-root", required=True)
     parser.add_argument("--trigger-artifact-root", required=True)
-    parser.add_argument("--backdoor-alias", required=True, choices=("wanet0", "ssba0"))
+    parser.add_argument("--backdoor-alias", required=True, choices=("blended0", "wanet0", "inputaware0", "ssba0"))
     parser.add_argument("--wanet-state-path", default=None)
     parser.add_argument("--ssba-encoder-path", default=None)
     parser.add_argument("--ssba-config-path", default=None)
@@ -74,7 +74,12 @@ def main() -> None:
         del model
     checks["model_load_and_output"] = models
 
-    trigger_type = {"wanet0": "wanet", "ssba0": "ssba"}[args.backdoor_alias]
+    trigger_type = {
+        "blended0": "blended",
+        "wanet0": "wanet",
+        "inputaware0": "inputaware",
+        "ssba0": "ssba",
+    }[args.backdoor_alias]
     explicit = {
         "badnet": None,
         "blended": None,

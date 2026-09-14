@@ -280,9 +280,9 @@ Probe is reused). Clean0 then scores the complete CIFAR-10 test split once and
 writes one shared Probe Top-100 selection. The previous fixed joint-success
 cohort is not used by this protocol. Clean0 and each selected backdoor alias
 run the same target-0 PGD on exactly this shared 100-image selection before
-the layerwise analysis. Supported aliases are `badnet0`, `wanet0`, and
-`ssba0`; WaNet and SSBA runs must receive the same `SELECTION_FILE` and never
-refit or reselect the Probe.
+the layerwise analysis. Supported aliases are `badnet0`, `blended0`, `wanet0`,
+`inputaware0`, and `ssba0`; every backdoor run must receive the same
+`SELECTION_FILE` and never refit or reselect the Probe.
 
 The analysis compares feature residuals `h(x_adv)-h(x)` and
 `h(T(x))-h(x)` at `pixel`, `conv1`, `layer1`, `layer2`, `layer3`, `layer4`,
@@ -317,7 +317,7 @@ GPU_ID=1 BATCH_SIZE=100 \
 bash bash/run_stage1d_layerwise_trigger_mechanism.sh
 ```
 
-For WaNet and SSBA, the runner first performs a Model Zoo quality/output
+For Blended, Input-Aware, WaNet, and SSBA, the runner first performs a Model Zoo quality/output
 preflight and official-trigger asset check, then aborts if the registered
 clean accuracy/native ASR gate or trigger loading fails. Example WaNet run:
 
@@ -345,7 +345,9 @@ Each result saves the shared selection provenance (and copies Probe training
 records/parameters when they are present beside the selection file), Clean0
 selection scores, PGD endpoint records, per-sample layerwise alignment and
 residual norms, pairwise PGD/trigger concentration, Model Zoo provenance, and
-the three depth curves under the configured output directory.
+the three depth curves under the configured output directory. It also writes
+`layer_gap_metrics.csv` and prints the compact per-layer alignment,
+trigger-concentration, and PGD-concentration gap table.
 The result describes representation-direction alignment and concentration;
 it does not establish a literal causal path.
 
