@@ -272,3 +272,36 @@ DATA_ROOT=/home/cml/8.11/data \
 GPU_ID=1 BATCH_SIZE=64 TRAIN_COUNT=1000 TOP_K=500 \
 bash bash/run_probe_cifar10_top500_asr.sh
 ```
+
+### Clean0/BadNet0 layerwise trigger-path mechanism
+
+`bash/run_stage1d_layerwise_trigger_mechanism.sh` reuses the 100-image
+BadNet joint-PGD-success cohort and endpoint archive from the completed
+pixel-space mechanism experiment. It performs forward hooks only: no Probe
+training, sample reselection, or PGD is run.
+
+The analysis compares feature residuals `h(x_adv)-h(x)` and
+`h(T(x))-h(x)` at `pixel`, `conv1`, `layer1`, `layer2`, `layer3`, `layer4`,
+and `avgpool`. Convolutional maps are flattened without early pooling. It
+writes per-sample alignment, residual norms, pairwise PGD/trigger
+concentration, Model Zoo provenance, and three depth curves under
+`results/stage1d_layerwise_trigger_mechanism/`.
+
+Example server invocation:
+
+```bash
+cd /home/cml/9.1-random-target
+PYTHON_BIN=/home/cml/.conda/envs/mdl-uap/bin/python \
+MODEL_ZOO_ROOT=/home/cml/model_zoo \
+MODEL_ZOO_SOURCE_ROOT=/home/cml/backdoor-model-zoo \
+SOURCE_ENDPOINT_ARRAYS=/home/cml/9.1-random-target/results/stage1d_pixel_trigger_mechanism/pixel_trigger_mechanism_20260913T140236Z/endpoint_arrays.npz \
+SOURCE_RUN_DIR=/home/cml/9.1-random-target/results/stage1d_pixel_trigger_mechanism/pixel_trigger_mechanism_20260913T140236Z \
+GPU_ID=1 BATCH_SIZE=100 \
+bash bash/run_stage1d_layerwise_trigger_mechanism.sh
+```
+
+The endpoint archive must contain exactly 100 unique indices and the five
+BadNet arrays `badnet_sample_indices`, `badnet_original`, `badnet_clean_adv`,
+`badnet_backdoor_adv`, and `badnet_trigger`, each shaped `[100,3,32,32]` in
+raw `[0,1]` image space. The result describes representation-direction
+alignment and concentration; it does not establish a literal causal path.
