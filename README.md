@@ -308,3 +308,10 @@ norms, pairwise PGD/trigger concentration, Model Zoo provenance, and the
 three depth curves under `results/stage1d_layerwise_trigger_mechanism/`.
 The result describes representation-direction alignment and concentration;
 it does not establish a literal causal path.
+
+For comparison with the earlier pixel-space cohort, use
+`bash/run_stage1d_layerwise_joint_success.sh`. It reuses exactly the 100
+BadNet joint-PGD-success samples and saved endpoints from the pixel trigger
+experiment, without Probe fitting or another PGD run. Set
+`SOURCE_ENDPOINT_ARRAYS` to that run's `endpoint_arrays.npz`; results are
+written separately under `results/stage1d_layerwise_joint_success/`.
