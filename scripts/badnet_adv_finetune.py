@@ -209,6 +209,7 @@ def attack_candidates(model, dataset, rows: list[dict[str, Any]], *, epsilon_pix
                 record = {
                     "endpoint": endpoint,
                     "success": bool(result.success[position].item()),
+                    "original_prediction": int(original_prediction[positions[position]].item()),
                     "endpoint_prediction": int(result.endpoint_prediction[position].item()),
                     "actual_linf": float(result.endpoint_linf[position].item()),
                     "actual_linf_pixels": float(result.endpoint_linf[position].item() * 255.0),
