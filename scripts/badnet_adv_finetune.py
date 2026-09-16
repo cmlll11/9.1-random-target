@@ -479,7 +479,15 @@ def main() -> None:
         train_accuracy = evaluate_clean_accuracy(model, dataset, train_indices, batch_size=args.eval_batch_size, device=device)
         trigger_success_full, trigger_eligible_full, trigger_asr_full = evaluate_trigger(model, adapter, dataset, eval_indices, batch_size=args.eval_batch_size, device=device)
         trigger_success_heldout, trigger_eligible_heldout, trigger_asr_heldout = evaluate_trigger(model, adapter, dataset, eval_indices_without_ft, batch_size=args.eval_batch_size, device=device)
-        pgd_rows, pgd_metrics = evaluate_pgd(model, dataset, heldout_rows, args=args, device=device, seed=args.random_seed + 1000)
+        pgd_rows, pgd_metrics = evaluate_pgd(
+            model,
+            dataset,
+            heldout_rows,
+            args=args,
+            device=device,
+            seed=args.random_seed + 1000,
+            baseline_eligible=baseline_eligible,
+        )
         for row in pgd_rows:
             row["model_arm"] = arm
             evaluation_rows.append(row)
