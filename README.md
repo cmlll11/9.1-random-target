@@ -357,3 +357,48 @@ BadNet joint-PGD-success samples and saved endpoints from the pixel trigger
 experiment, without Probe fitting or another PGD run. Set
 `SOURCE_ENDPOINT_ARRAYS` to that run's `endpoint_arrays.npz`; results are
 written separately under `results/stage1d_layerwise_joint_success/`.
+
+### BadNet robust-sample adversarial fine-tuning intervention
+
+`bash/run_stage1d_badnet_adv_finetune.sh` is a small functional intervention
+experiment. It reuses the existing Clean1--3 Probe Top-500 selection, filters
+non-target samples by successful BadNet0 target-0 PGD, and takes the first 400
+in Probe-rank order. The first 300 are used for fine-tuning and the remaining
+100 are held out for PGD evaluation. It tries 1/255 first and switches the
+whole experiment to 1.5/255 only if fewer than 400 successful samples are
+available; epsilons are never mixed.
+
+The experiment has two mutable arms plus an untouched baseline:
+
+* `baseline`: the original `badnet0` Model Zoo model;
+* `clean_ft`: three epochs of layer4 plus classifier-head AdamW fine-tuning
+  with `CE(f(x), y)`;
+* `adv_ft`: three epochs of layer4 plus classifier-head AdamW fine-tuning with
+  `0.5*CE(f(x), y) + 0.5*CE(f(x_adv), y)`.
+
+The labels are always the original CIFAR-10 labels. The official BadNet patch
+is used to measure native trigger ASR before and after the intervention. Clean
+accuracy and held-out target-PGD ASR are also measured, with both the fixed
+baseline-eligible denominator and the per-model denominator recorded. The
+fine-tuned state is saved under the experiment result directory only; the
+shared Model Zoo is not modified and no new alias is registered.
+
+Example server invocation:
+
+```bash
+cd /home/cml/9.1-random-target
+PYTHON_BIN=/home/cml/.conda/envs/mdl-uap/bin/python \
+MODEL_ZOO_ROOT=/home/cml/model_zoo \
+MODEL_ZOO_SOURCE_ROOT=/home/cml/backdoor-model-zoo \
+DATA_ROOT=/home/cml/8.11/data \
+SELECTION_FILE=/home/cml/9.1-random-target/results/stage1e_cifar10_probe_top500_asr/<run>/selected_probe_top500.csv \
+BACKDOORBENCH_ROOT=/home/cml/9.1-random-target/third_party/BackdoorBench \
+GPU_ID=1 BATCH_SIZE=32 EVAL_BATCH_SIZE=128 \
+bash bash/run_stage1d_badnet_adv_finetune.sh
+```
+
+Results are written under `results/stage1d_badnet_adv_finetune/` with the
+resolved configuration, source/cohort records, fixed PGD endpoints,
+fine-tuning history, checkpoints, per-sample evaluations, group metrics,
+Model Zoo provenance, and a summary. This is a single-seed exploratory
+functional intervention, not a definitive causal proof.
