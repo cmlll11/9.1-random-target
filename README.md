@@ -362,25 +362,29 @@ written separately under `results/stage1d_layerwise_joint_success/`.
 
 `bash/run_stage1d_badnet_adv_finetune.sh` is a small functional intervention
 experiment. It reuses the existing Clean1--3 Probe Top-500 selection, filters
-non-target samples by successful BadNet0 target-0 PGD, and takes the first 400
-in Probe-rank order. The first 300 are used for fine-tuning and the remaining
-100 are held out for PGD evaluation. It tries 1/255 first and switches the
-whole experiment to 1.5/255 only if fewer than 400 successful samples are
-available; epsilons are never mixed.
+non-target samples by successful BadNet0 target-0 PGD at a fixed 1/255, and
+keeps successful samples in Probe-rank order. The first 200 are used for
+fine-tuning and every remaining successful sample is held out for evaluation.
+The experiment stops if fewer than 200 successful samples are available; it
+does not switch epsilon or mix budgets.
 
 The experiment has two mutable arms plus an untouched baseline:
 
 * `baseline`: the original `badnet0` Model Zoo model;
-* `clean_ft`: three epochs of layer4 plus classifier-head AdamW fine-tuning
-  with `CE(f(x), y)`;
-* `adv_ft`: three epochs of layer4 plus classifier-head AdamW fine-tuning with
-  `0.5*CE(f(x), y) + 0.5*CE(f(x_adv), y)`.
+* `clean_ft`: one epoch of layer4 plus classifier-head AdamW fine-tuning at
+  `1e-5`, with BatchNorm affine parameters and running statistics frozen;
+* `adv_ft`: the same intervention with
+  `0.5*CE(f(x), y) + 0.5*CE(f(x_adv), y)`;
+* both mutable arms include a small clean-logit anchoring term against the
+  original `badnet0` logits to limit global function drift.
 
 The labels are always the original CIFAR-10 labels. The official BadNet patch
 is used to measure native trigger ASR before and after the intervention. Clean
 accuracy and held-out target-PGD ASR are also measured, with both the fixed
 baseline-eligible denominator and the per-model denominator recorded. The
-fine-tuned state is saved under the experiment result directory only; the
+pre-fine-tuning PGD endpoints are generated once and reused as the primary
+held-out evaluation for all three arms; no second PGD run is used for this
+primary comparison. The fine-tuned state is saved under the experiment result directory only; the
 shared Model Zoo is not modified and no new alias is registered.
 
 Example server invocation:

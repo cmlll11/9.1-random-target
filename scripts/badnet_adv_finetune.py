@@ -32,10 +32,10 @@ from pilot_common import batch_images, seed_everything, timestamp_run_dir, write
 
 
 TARGET = 0
-TRAIN_COHORT_SIZE = 300
-HELDOUT_COHORT_SIZE = 100
-REQUIRED_COHORT_SIZE = TRAIN_COHORT_SIZE + HELDOUT_COHORT_SIZE
-EPSILON_ATTEMPTS = (1.0, 1.5)
+TRAIN_COHORT_SIZE = 200
+MINIMUM_COHORT_SIZE = TRAIN_COHORT_SIZE
+FIXED_EPSILON_PIXELS = 1.0
+VALIDITY_MAX_CLEAN_ACCURACY_DROP = 0.02
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,9 +51,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--restarts", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--eval-batch-size", type=int, default=128)
-    parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--learning-rate", type=float, default=1e-5)
     parser.add_argument("--weight-decay", type=float, default=0.0)
+    parser.add_argument("--anchor-weight", type=float, default=0.1)
     parser.add_argument("--fine-tune-seed", type=int, default=0)
     parser.add_argument("--random-seed", type=int, default=20260916)
     parser.add_argument("--device", default="cuda:0")
@@ -155,6 +156,14 @@ def load_trainable_badnet(model_zoo_root: Path, device: torch.device):
     for parameter in head.parameters():
         parameter.requires_grad_(True)
 
+    # BatchNorm affine parameters and running statistics are not part of the
+    # intended intervention.  Keeping them frozen prevents a tiny cohort from
+    # changing the representation globally through running-stat updates.
+    for module in layer4.modules():
+        if isinstance(module, nn.modules.batchnorm._BatchNorm):
+            for parameter in module.parameters():
+                parameter.requires_grad_(False)
+
     trainable_names = [name for name, parameter in model.named_parameters() if parameter.requires_grad]
     if not trainable_names:
         raise RuntimeError("no trainable parameters selected")
@@ -162,7 +171,7 @@ def load_trainable_badnet(model_zoo_root: Path, device: torch.device):
 
 
 def set_fine_tune_mode(model: nn.Module) -> None:
-    """Keep frozen BatchNorm/statistical modules in eval mode."""
+    """Train only layer4/head while keeping every BatchNorm in eval mode."""
 
     model.eval()
     model.model.layer4.train()
@@ -170,6 +179,9 @@ def set_fine_tune_mode(model: nn.Module) -> None:
         value = getattr(model.model, candidate, None)
         if isinstance(value, nn.Module):
             value.train()
+    for module in model.model.layer4.modules():
+        if isinstance(module, nn.modules.batchnorm._BatchNorm):
+            module.eval()
 
 
 def load_raw_batch(dataset, indices: list[int], device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
@@ -236,7 +248,7 @@ def attack_candidates(model, dataset, rows: list[dict[str, Any]], *, epsilon_pix
     return output_rows, attacks
 
 
-def select_successful_cohort(rows: list[dict[str, Any]], attacks: dict[int, dict[str, Any]], *, count: int = REQUIRED_COHORT_SIZE) -> list[dict[str, Any]]:
+def select_successful_cohort(rows: list[dict[str, Any]], attacks: dict[int, dict[str, Any]], *, count: int | None = None) -> list[dict[str, Any]]:
     """Select successful non-target samples in the original Probe-rank order."""
 
     qualified: list[dict[str, Any]] = []
@@ -246,35 +258,39 @@ def select_successful_cohort(rows: list[dict[str, Any]], attacks: dict[int, dict
         if int(row["true_label"]) == TARGET or not attack or not attack["success"]:
             continue
         qualified.append({**row, **attack})
-        if len(qualified) == count:
+        if count is not None and len(qualified) == count:
             break
     return qualified
 
 
-def train_model(model: nn.Module, original: torch.Tensor, adversarial: torch.Tensor, labels: torch.Tensor, *, arm: str, args: argparse.Namespace, seed: int) -> list[dict[str, Any]]:
+def train_model(model: nn.Module, original: torch.Tensor, adversarial: torch.Tensor, labels: torch.Tensor, anchor_logits: torch.Tensor, *, arm: str, args: argparse.Namespace, seed: int) -> list[dict[str, Any]]:
     seed_everything(seed)
     set_fine_tune_mode(model)
     parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
     optimizer = torch.optim.AdamW(parameters, lr=args.learning_rate, weight_decay=args.weight_decay)
-    dataset = TensorDataset(original.detach().cpu(), adversarial.detach().cpu(), labels.detach().cpu())
+    dataset = TensorDataset(original.detach().cpu(), adversarial.detach().cpu(), labels.detach().cpu(), anchor_logits.detach().cpu())
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, generator=torch.Generator().manual_seed(seed), drop_last=False)
     history: list[dict[str, Any]] = []
     for epoch in range(1, args.epochs + 1):
         set_fine_tune_mode(model)
         total_loss = 0.0
         total_count = 0
-        for clean_batch, adv_batch, label_batch in loader:
+        for clean_batch, adv_batch, label_batch, anchor_batch in loader:
             clean_batch = clean_batch.to(next(model.parameters()).device)
             adv_batch = adv_batch.to(clean_batch.device)
             label_batch = label_batch.to(clean_batch.device)
+            anchor_batch = anchor_batch.to(clean_batch.device)
             optimizer.zero_grad(set_to_none=True)
-            clean_loss = F.cross_entropy(model(clean_batch), label_batch)
+            clean_logits = model(clean_batch)
+            clean_loss = F.cross_entropy(clean_logits, label_batch)
+            anchor_loss = F.mse_loss(clean_logits, anchor_batch)
             if arm == "adv_ft":
                 adv_loss = F.cross_entropy(model(adv_batch), label_batch)
                 loss = 0.5 * (clean_loss + adv_loss)
             else:
                 adv_loss = torch.zeros((), device=clean_batch.device)
                 loss = clean_loss
+            loss = loss + args.anchor_weight * anchor_loss
             loss.backward()
             optimizer.step()
             count = int(label_batch.numel())
@@ -309,30 +325,25 @@ def evaluate_trigger(model, adapter, dataset, indices: list[int], *, batch_size:
     return success, eligible, success / eligible if eligible else float("nan")
 
 
-def evaluate_pgd(model, dataset, selected_rows: list[dict[str, Any]], *, args: argparse.Namespace, device: torch.device, seed: int, baseline_eligible: set[int]) -> tuple[list[dict[str, Any]], dict[str, float]]:
+def evaluate_fixed_endpoints(model, dataset, selected_rows: list[dict[str, Any]], *, device: torch.device, baseline_eligible: set[int], batch_size: int) -> tuple[list[dict[str, Any]], dict[str, float]]:
+    """Evaluate the exact pre-fine-tuning endpoints; do not rerun PGD."""
     rows: list[dict[str, Any]] = []
     eligible_fixed = 0
     success_fixed = 0
     standard_eligible = 0
     standard_success = 0
     indices = [int(row["sample_index"]) for row in selected_rows]
-    seed_everything(seed)
-    for batch_indices, images, labels in batch_images(dataset, indices, batch_size=args.batch_size, device=device):
+    row_by_index = {int(row["sample_index"]): row for row in selected_rows}
+    for batch_indices, images, labels in batch_images(dataset, indices, batch_size=batch_size, device=device):
+        endpoints = torch.from_numpy(np.stack([row_by_index[int(index)]["endpoint"] for index in batch_indices])).to(device)
         with torch.no_grad():
             original_prediction = model(images).argmax(dim=1)
-        result = targeted_pgd_endpoint(
-            model,
-            images,
-            target=TARGET,
-            epsilon=float(selected_rows[0]["epsilon_pixels"]) / 255.0,
-            steps=args.steps,
-            alpha=float(selected_rows[0]["epsilon_pixels"]) / 2550.0,
-            random_start=True,
-            restarts=args.restarts,
-        )
+            endpoint_logits = model(endpoints)
+            endpoint_prediction = endpoint_logits.argmax(dim=1)
+            endpoint_target_loss = F.cross_entropy(endpoint_logits, torch.full_like(labels, TARGET), reduction="none")
         for position, index in enumerate(batch_indices):
             prediction = int(original_prediction[position].item())
-            success = bool(result.success[position].item())
+            success = bool(endpoint_prediction[position].eq(TARGET).item())
             baseline_ok = int(index) in baseline_eligible
             if baseline_ok:
                 eligible_fixed += 1
@@ -348,19 +359,21 @@ def evaluate_pgd(model, dataset, selected_rows: list[dict[str, Any]], *, args: a
                 "baseline_eligible": baseline_ok,
                 "eligible": prediction != TARGET,
                 "success": success,
-                "endpoint_prediction": int(result.endpoint_prediction[position].item()),
-                "actual_linf": float(result.endpoint_linf[position].item()),
-                "actual_linf_pixels": float(result.endpoint_linf[position].item() * 255.0),
-                "actual_l2": float(torch.linalg.vector_norm(result.endpoint[position] - images[position]).item()),
-                "targeted_loss": float(result.target_loss[position].item()),
+                "endpoint_prediction": int(endpoint_prediction[position].item()),
+                "actual_linf": float((endpoints[position] - images[position]).abs().amax().item()),
+                "actual_linf_pixels": float((endpoints[position] - images[position]).abs().amax().item() * 255.0),
+                "actual_l2": float(torch.linalg.vector_norm(endpoints[position] - images[position]).item()),
+                "targeted_loss": float(endpoint_target_loss[position].item()),
+                "evaluation_type": "fixed_pre_finetuning_endpoint",
+                "endpoint_reused": True,
             })
     return rows, {
         "fixed_baseline_eligible": eligible_fixed,
         "fixed_baseline_success": success_fixed,
         "fixed_baseline_asr": success_fixed / eligible_fixed if eligible_fixed else float("nan"),
-        "per_model_eligible": standard_eligible,
-        "per_model_success": standard_success,
-        "per_model_asr": standard_success / standard_eligible if standard_eligible else float("nan"),
+        "fixed_endpoint_per_model_eligible": standard_eligible,
+        "fixed_endpoint_per_model_success": standard_success,
+        "fixed_endpoint_per_model_asr": standard_success / standard_eligible if standard_eligible else float("nan"),
     }
 
 
@@ -394,14 +407,16 @@ def main() -> None:
     provenance = model_zoo_provenance(model_zoo_root, source_root)
     config = vars(args).copy()
     config.update({
-        "protocol": "stage1d-badnet0-robust-sample-adv-finetune-v1",
+        "protocol": "stage1d-badnet0-robust-sample-adv-finetune-v2-fixed-eps1-train200",
         "target": TARGET,
         "selection_file": str(selection_path),
         "selection_sha256": sha256_file(selection_path),
-        "cohort_policy": {"required": REQUIRED_COHORT_SIZE, "fine_tune": TRAIN_COHORT_SIZE, "heldout": HELDOUT_COHORT_SIZE, "order": "Probe rank after filtering true_label != 0 and BadNet PGD success"},
-        "epsilon_attempts_pixels": list(EPSILON_ATTEMPTS),
+        "cohort_policy": {"minimum_successful": MINIMUM_COHORT_SIZE, "fine_tune": TRAIN_COHORT_SIZE, "heldout": "all remaining successful samples", "order": "Probe rank after filtering true_label != 0 and BadNet PGD success"},
+        "epsilon_pixels": FIXED_EPSILON_PIXELS,
         "pgd": {"steps": args.steps, "restarts": args.restarts, "random_start": True, "alpha": "epsilon/10"},
-        "fine_tuning": {"arms": ["baseline", "clean_ft", "adv_ft"], "scope": "layer4 + classifier head", "optimizer": "AdamW", "losses": {"clean_ft": "CE(clean,y)", "adv_ft": "0.5*CE(clean,y)+0.5*CE(adv,y)"}, "epochs": args.epochs, "learning_rate": args.learning_rate, "weight_decay": args.weight_decay, "seed": args.fine_tune_seed},
+        "fine_tuning": {"arms": ["baseline", "clean_ft", "adv_ft"], "scope": "layer4 + classifier head, BatchNorm frozen", "optimizer": "AdamW", "losses": {"clean_ft": "CE(clean,y)+anchor_weight*MSE(clean_logits,baseline_logits)", "adv_ft": "0.5*CE(clean,y)+0.5*CE(adv,y)+anchor_weight*MSE(clean_logits,baseline_logits)"}, "epochs": args.epochs, "learning_rate": args.learning_rate, "weight_decay": args.weight_decay, "anchor_weight": args.anchor_weight, "seed": args.fine_tune_seed},
+        "evaluation": {"primary": "fixed pre-fine-tuning endpoints", "rerun_pgd": False},
+        "validity": {"max_clean_accuracy_drop": VALIDITY_MAX_CLEAN_ACCURACY_DROP, "requires_clean_accuracy_drop_within_threshold": True},
         "model_zoo_provenance": provenance,
         "badnet_trigger": {"source": str(trigger_path), "sha256": sha256_file(trigger_path)},
     })
@@ -415,28 +430,26 @@ def main() -> None:
     final_epsilon = None
     final_attacks: dict[int, dict[str, Any]] = {}
     final_attack_rows: list[dict[str, Any]] = []
-    for attempt_index, epsilon_pixels in enumerate(EPSILON_ATTEMPTS):
-        attack_rows, attacks = attack_candidates(probe_model, dataset, source_rows, epsilon_pixels=epsilon_pixels, args=args, device=device, seed=args.random_seed + attempt_index)
-        attempts.extend(attack_rows)
-        qualified = select_successful_cohort(source_rows, attacks, count=len(source_rows))
-        log(f"epsilon={epsilon_pixels}/255 qualified={len(qualified)}/{REQUIRED_COHORT_SIZE}")
-        if len(qualified) >= REQUIRED_COHORT_SIZE:
-            final_epsilon = epsilon_pixels
-            final_attacks = attacks
-            final_attack_rows = attack_rows
-            break
+    attack_rows, attacks = attack_candidates(probe_model, dataset, source_rows, epsilon_pixels=FIXED_EPSILON_PIXELS, args=args, device=device, seed=args.random_seed)
+    attempts.extend(attack_rows)
+    qualified = select_successful_cohort(source_rows, attacks)
+    log(f"epsilon={FIXED_EPSILON_PIXELS}/255 qualified={len(qualified)}/{MINIMUM_COHORT_SIZE}")
+    if len(qualified) >= MINIMUM_COHORT_SIZE:
+        final_epsilon = FIXED_EPSILON_PIXELS
+        final_attacks = attacks
+        final_attack_rows = attack_rows
     del probe_model
     if final_epsilon is None:
         write_csv(output / "pgd_generation_records.csv", attempts)
-        write_json(output / "summary.json", {"status": "insufficient_cohort", "required_cohort_size": REQUIRED_COHORT_SIZE, "attempts": attempts, "model_zoo_provenance": provenance})
+        write_json(output / "summary.json", {"status": "insufficient_cohort", "minimum_fine_tune_size": MINIMUM_COHORT_SIZE, "epsilon_pixels": FIXED_EPSILON_PIXELS, "attempts": attempts, "model_zoo_provenance": provenance})
         log("ERROR: insufficient successful PGD cohort; no fine-tuning was run")
         raise SystemExit(2)
 
-    selected_rows = [{**row, "epsilon_pixels": final_epsilon} for row in select_successful_cohort(source_rows, final_attacks, count=REQUIRED_COHORT_SIZE)]
+    selected_rows = [{**row, "epsilon_pixels": final_epsilon} for row in select_successful_cohort(source_rows, final_attacks)]
     train_rows = selected_rows[:TRAIN_COHORT_SIZE]
     heldout_rows = selected_rows[TRAIN_COHORT_SIZE:]
-    if len(heldout_rows) != HELDOUT_COHORT_SIZE:
-        raise RuntimeError("selected cohort split is not exactly 300/100")
+    if len(train_rows) != TRAIN_COHORT_SIZE or not heldout_rows:
+        raise RuntimeError("selected cohort must contain 200 fine-tuning samples and at least one held-out sample")
     train_indices = [int(row["sample_index"]) for row in train_rows]
     heldout_indices = [int(row["sample_index"]) for row in heldout_rows]
     if set(train_indices) & set(heldout_indices):
@@ -451,7 +464,7 @@ def main() -> None:
     all_indices = [int(row["sample_index"]) for row in selected_rows]
     original, labels = load_raw_batch(dataset, all_indices, device)
     adversarial = torch.from_numpy(np.stack([row["endpoint"] for row in selected_rows])).to(device)
-    np.savez_compressed(output / "endpoint_arrays.npz", sample_indices=np.asarray(all_indices, dtype=np.int64), true_labels=labels.cpu().numpy(), original=original.cpu().numpy(), badnet_pgd_endpoint=adversarial.cpu().numpy(), train_positions=np.arange(TRAIN_COHORT_SIZE), heldout_positions=np.arange(TRAIN_COHORT_SIZE, REQUIRED_COHORT_SIZE), epsilon_pixels=np.asarray([final_epsilon], dtype=np.float32))
+    np.savez_compressed(output / "endpoint_arrays.npz", sample_indices=np.asarray(all_indices, dtype=np.int64), true_labels=labels.cpu().numpy(), original=original.cpu().numpy(), badnet_pgd_endpoint=adversarial.cpu().numpy(), train_positions=np.arange(TRAIN_COHORT_SIZE), heldout_positions=np.arange(TRAIN_COHORT_SIZE, len(selected_rows)), epsilon_pixels=np.asarray([final_epsilon], dtype=np.float32))
 
     adapter = build_trigger_adapters(model_root=model_zoo_root, backdoorbench_root=Path(args.backdoorbench_root).expanduser().resolve(), explicit={"badnet": trigger_path}, device=device, blended_alpha=0.2, wanet_s=0.5, wanet_grid_rescale=1.0)["badnet"]
     if not adapter.status.available:
@@ -466,11 +479,16 @@ def main() -> None:
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     train_original, train_labels = original[:TRAIN_COHORT_SIZE], labels[:TRAIN_COHORT_SIZE]
     train_adversarial = adversarial[:TRAIN_COHORT_SIZE]
+    anchor_model, _ = load_trainable_badnet(model_zoo_root, device)
+    anchor_model.eval()
+    with torch.no_grad():
+        anchor_logits = anchor_model(train_original).detach()
+    del anchor_model
     for arm in ("baseline", "clean_ft", "adv_ft"):
         log(f"Evaluating {arm}")
         model, scope = load_trainable_badnet(model_zoo_root, device)
         if arm in {"clean_ft", "adv_ft"}:
-            history_rows.extend(train_model(model, train_original, train_adversarial, train_labels, arm=arm, args=args, seed=args.fine_tune_seed))
+            history_rows.extend(train_model(model, train_original, train_adversarial, train_labels, anchor_logits, arm=arm, args=args, seed=args.fine_tune_seed))
             state_dict = {name: value.detach().cpu() for name, value in model.state_dict().items()}
             torch.save({"state_dict": state_dict, "base_alias": "badnet0", "fine_tune_arm": arm, "trainable_scope": scope}, checkpoint_dir / f"{arm}_state_dict.pt")
         model.eval()
@@ -479,14 +497,13 @@ def main() -> None:
         train_accuracy = evaluate_clean_accuracy(model, dataset, train_indices, batch_size=args.eval_batch_size, device=device)
         trigger_success_full, trigger_eligible_full, trigger_asr_full = evaluate_trigger(model, adapter, dataset, eval_indices, batch_size=args.eval_batch_size, device=device)
         trigger_success_heldout, trigger_eligible_heldout, trigger_asr_heldout = evaluate_trigger(model, adapter, dataset, eval_indices_without_ft, batch_size=args.eval_batch_size, device=device)
-        pgd_rows, pgd_metrics = evaluate_pgd(
+        pgd_rows, pgd_metrics = evaluate_fixed_endpoints(
             model,
             dataset,
             heldout_rows,
-            args=args,
             device=device,
-            seed=args.random_seed + 1000,
             baseline_eligible=baseline_eligible,
+            batch_size=args.eval_batch_size,
         )
         for row in pgd_rows:
             row["model_arm"] = arm
@@ -496,9 +513,18 @@ def main() -> None:
 
     write_csv(output / "fine_tune_history.csv", history_rows)
     write_csv(output / "evaluation_records.csv", evaluation_rows)
+    baseline_metrics = next(row for row in arm_metrics if row["model_arm"] == "baseline")
+    for row in arm_metrics:
+        drop = baseline_metrics["clean_accuracy_heldout"] - row["clean_accuracy_heldout"]
+        row["clean_accuracy_heldout_drop_vs_baseline"] = drop
+        row["validity_clean_accuracy_within_2pp"] = drop <= VALIDITY_MAX_CLEAN_ACCURACY_DROP
     write_csv(output / "group_metrics.csv", arm_metrics)
     write_csv(output / "model_quality.csv", [{"alias": "badnet0", "clean_acc": provenance["badnet0_info"].get("clean_acc"), "native_asr": provenance["badnet0_info"].get("asr"), "model_id": provenance["badnet0_info"].get("model_id")}])
-    summary = {"status": "complete", "protocol": config["protocol"], "output_directory": str(output), "final_epsilon_pixels": final_epsilon, "selected_count": len(selected_rows), "fine_tune_count": len(train_rows), "heldout_count": len(heldout_rows), "attempts": [{"epsilon_pixels": epsilon, "qualified_count": sum(1 for row in attempts if float(row["epsilon_pixels"]) == epsilon and row["success"] is True)} for epsilon in EPSILON_ATTEMPTS], "trainable_scope": scope, "model_zoo_provenance": provenance, "metrics": arm_metrics, "interpretation_boundary": "single-seed exploratory functional intervention; not a definitive causal proof"}
+    validity_rows = []
+    for row in arm_metrics:
+        drop = baseline_metrics["clean_accuracy_heldout"] - row["clean_accuracy_heldout"]
+        validity_rows.append({"model_arm": row["model_arm"], "clean_accuracy_heldout_drop": drop, "within_threshold": drop <= VALIDITY_MAX_CLEAN_ACCURACY_DROP})
+    summary = {"status": "complete", "protocol": config["protocol"], "output_directory": str(output), "final_epsilon_pixels": final_epsilon, "selected_count": len(selected_rows), "fine_tune_count": len(train_rows), "heldout_count": len(heldout_rows), "attempts": [{"epsilon_pixels": FIXED_EPSILON_PIXELS, "qualified_count": len(selected_rows)}], "trainable_scope": scope, "model_zoo_provenance": provenance, "metrics": arm_metrics, "validity": validity_rows, "interpretation_boundary": "single-seed exploratory functional intervention; results are invalid for mechanism claims if clean accuracy drops more than 2 percentage points"}
     write_json(output / "summary.json", summary)
     log(f"BadNet0 adversarial fine-tuning experiment complete: {output}")
 
