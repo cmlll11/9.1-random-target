@@ -406,3 +406,45 @@ resolved configuration, source/cohort records, fixed PGD endpoints,
 fine-tuning history, checkpoints, per-sample evaluations, group metrics,
 Model Zoo provenance, and a summary. This is a single-seed exploratory
 functional intervention, not a definitive causal proof.
+
+### Pixel-space adversarial residual decoupling
+
+`bash/run_stage1d_adversarial_residual_decoupling.sh` reuses the existing
+shared Probe Top-100 selection and compatible saved PGD endpoint archives
+when available. It does not retrain a Probe or modify the PGD protocol. For
+each alias and epsilon, it compares raw pixel adversarial residuals with the
+paired residual after projecting away that same sample's Clean0 PGD direction.
+Clean1/2 are controls; official attack-specific trigger adapters are used for
+trigger alignment. Reports include all-valid and Clean0/current common-success
+concentration, plus both all-sample and common-success trigger alignment.
+Missing individual models/triggers are recorded and skipped where possible.
+
+The wrapper checks `nvidia-smi` before starting. `GPU_ID=auto` (the default)
+selects an idle GPU with at most 20% utilization and 2048 MiB in use; a
+manually selected GPU is also rejected if it exceeds those limits. The script
+defaults to the server's existing `mdl-uap`, CIFAR-10, Model Zoo, and trigger
+artifact locations; environment variables can override them. Existing endpoint
+archives are reused only if their cohort and PGD configuration match.
+
+Example server invocation (replace `<run>` with the existing shared selection
+run):
+
+```bash
+cd /home/cml/9.1-random-target
+PYTHON_BIN=/home/cml/.conda/envs/mdl-uap/bin/python \
+MODEL_ZOO_ROOT=/home/cml/model_zoo \
+MODEL_ZOO_SOURCE_ROOT=/home/cml/backdoor-model-zoo \
+DATA_ROOT=/home/cml/8.11/data \
+SELECTION_FILE=/home/cml/9.1-random-target/results/stage1d_probe_top100_selection/<run>/selected_probe_top100.csv \
+GPU_ID=auto BATCH_SIZE=64 \
+bash bash/run_stage1d_adversarial_residual_decoupling.sh
+```
+
+Each launch writes a timestamped directory under
+`results/stage1d_adversarial_residual_decoupling/` with resolved config,
+selection provenance, endpoint/cache records, per-sample projection and
+alignment values, group metrics, and `summary.json`. The wrapper writes its
+launch log and PID there; use `nohup` with a persistent output log if the SSH
+session may disconnect. Runs do not resume from partial outputs. The projection
+is a descriptive pixel-space decomposition against Clean0's paired PGD
+direction; it is not evidence of a literal causal feature path.
